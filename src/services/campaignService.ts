@@ -16,6 +16,8 @@ export interface CampaignData {
         address: string;
     };
     imageUrl?: string;
+    videoUrl?: string;
+    additionalImages?: string[];
     createdAt?: any;
 }
 

@@ -29,7 +29,7 @@ const PayPalDonationButton = ({ campaignId, onSuccess, onError }: PayPalDonation
         commit: true
     };
 
-    const createOrder = (data: any, actions: any) => {
+    const createOrder = (_data: any, actions: any) => {
         return actions.order.create({
             intent: "CAPTURE",
             purchase_units: [
@@ -49,7 +49,7 @@ const PayPalDonationButton = ({ campaignId, onSuccess, onError }: PayPalDonation
         });
     };
 
-    const onApprove = async (data: any, actions: any) => {
+    const onApprove = async (_data: any, actions: any) => {
         setIsPending(true);
         try {
             const order = await actions.order.capture();

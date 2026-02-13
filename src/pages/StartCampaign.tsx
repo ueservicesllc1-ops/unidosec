@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Camera, DollarSign, FileText, Upload, AlertCircle, Loader2, ChevronRight, User, Heart, Image as ImageIcon } from 'lucide-react';
+import { Camera, Upload, Loader2, ChevronRight, User, Heart, Image as ImageIcon } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { createCampaign, uploadImage } from '../services/campaignService';
 import { useAuth } from '../context/AuthContext';
@@ -18,12 +18,16 @@ const StartCampaign = () => {
         goal: '',
         description: '',
         beneficiary: 'myself',
+        videoUrl: '',
         organizerName: user?.displayName || '',
         organizerEmail: user?.email || '',
         organizerPhone: '',
         organizerCity: 'Quito',
         organizerAddress: ''
     });
+
+    const [galleryImages, setGalleryImages] = useState<File[]>([]);
+    const [galleryPreviews, setGalleryPreviews] = useState<string[]>([]);
 
     const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
@@ -37,22 +41,43 @@ const StartCampaign = () => {
         }
     };
 
+    const handleGallerySelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (e.target.files) {
+            const files = Array.from(e.target.files);
+            setGalleryImages(prev => [...prev, ...files]);
+
+            const newPreviews = files.map(file => URL.createObjectURL(file));
+            setGalleryPreviews(prev => [...prev, ...newPreviews]);
+        }
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setIsSubmitting(true);
 
         try {
+            // 1. Upload Main Image
             let imageUrl = '';
             if (selectedImage) {
                 imageUrl = await uploadImage(selectedImage);
             }
 
+            // 2. Upload Gallery Images (Parallel)
+            let additionalImages: string[] = [];
+            if (galleryImages.length > 0) {
+                const uploadPromises = galleryImages.map(file => uploadImage(file));
+                additionalImages = await Promise.all(uploadPromises);
+            }
+
+            // 3. Create Campaign
             const campaignId = await createCampaign({
                 title: formData.title,
                 category: formData.category,
                 goal: Number(formData.goal),
                 description: formData.description,
                 beneficiary: formData.beneficiary,
+                videoUrl: formData.videoUrl, // YouTube Link
+                additionalImages: additionalImages, // Gallery URLs
                 organizer: {
                     name: formData.organizerName,
                     email: formData.organizerEmail,
@@ -203,41 +228,70 @@ const StartCampaign = () => {
                         </div>
                     </div>
 
-                    {/* Section 3: Photo */}
+                    {/* Section 3: Photo & Gallery */}
                     <div className="space-y-6">
                         <div className="flex items-center space-x-3 text-primary border-b border-gray-100 pb-3">
                             <ImageIcon className="h-6 w-6" />
-                            <h2 className="text-xl font-bold text-gray-800">3. Foto principal</h2>
+                            <h2 className="text-xl font-bold text-gray-800">3. Multimedia (Más impacto)</h2>
                         </div>
 
-                        <div
-                            onClick={() => fileInputRef.current?.click()}
-                            className="relative group border-2 border-dashed border-gray-300 rounded-2xl p-8 text-center hover:border-primary hover:bg-primary/5 transition-all duration-300 cursor-pointer h-64 flex flex-col items-center justify-center overflow-hidden"
-                        >
-                            {imagePreview ? (
-                                <img src={imagePreview} alt="Preview" className="absolute inset-0 w-full h-full object-cover" />
-                            ) : (
-                                <div className="space-y-2">
-                                    <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto text-primary mb-2">
-                                        <Camera className="h-8 w-8" />
-                                    </div>
-                                    <h3 className="text-lg font-bold text-gray-700">Sube una foto impactante</h3>
-                                    <p className="text-sm text-gray-500">Las campañas con fotos reales recaudan un 50% más.</p>
-                                </div>
-                            )}
-
-                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                <span className="text-white font-bold bg-white/20 backdrop-blur px-4 py-2 rounded-full border border-white/50">Cambiar Foto</span>
-                            </div>
-
+                        {/* Video Link */}
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-2">Video de YouTube (Opcional)</label>
                             <input
-                                type="file"
-                                ref={fileInputRef}
-                                className="hidden"
-                                accept="image/*"
-                                onChange={handleImageSelect}
+                                type="url"
+                                className="w-full px-5 py-3 rounded-xl border border-gray-200 bg-gray-50 focus:bg-white focus:ring-2 focus:ring-primary/20 focus:border-primary transition-all duration-200"
+                                placeholder="https://youtube.com/watch?v=..."
+                                value={formData.videoUrl}
+                                onChange={(e) => setFormData({ ...formData, videoUrl: e.target.value })}
                             />
+                            <p className="text-xs text-gray-400 mt-1">Los videos aumentan un 300% las donaciones. Pega tu enlace aquí.</p>
                         </div>
+
+                        {/* Main Photo */}
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-2">Foto Principal (Portada)</label>
+                            <div
+                                onClick={() => fileInputRef.current?.click()}
+                                className="relative group border-2 border-dashed border-gray-300 rounded-2xl p-8 text-center hover:border-primary hover:bg-primary/5 transition-all duration-300 cursor-pointer h-64 flex flex-col items-center justify-center overflow-hidden"
+                            >
+                                {imagePreview ? (
+                                    <img src={imagePreview} alt="Preview" className="absolute inset-0 w-full h-full object-cover" />
+                                ) : (
+                                    <div className="space-y-2">
+                                        <div className="w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto text-primary mb-2">
+                                            <Camera className="h-8 w-8" />
+                                        </div>
+                                        <h3 className="text-lg font-bold text-gray-700">Sube una foto impactante</h3>
+                                    </div>
+                                )}
+                                <input
+                                    type="file"
+                                    ref={fileInputRef}
+                                    className="hidden"
+                                    accept="image/*"
+                                    onChange={handleImageSelect}
+                                />
+                            </div>
+                        </div>
+
+                        {/* Gallery Images */}
+                        <div>
+                            <label className="block text-sm font-semibold text-gray-700 mb-2">Galería de Fotos (Opcional)</label>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                {galleryPreviews.map((src, index) => (
+                                    <div key={index} className="relative aspect-square rounded-xl overflow-hidden shadow-sm">
+                                        <img src={src} alt={`Gallery ${index}`} className="w-full h-full object-cover" />
+                                    </div>
+                                ))}
+                                <label className="aspect-square rounded-xl border-2 border-dashed border-gray-300 flex flex-col items-center justify-center text-gray-400 hover:border-primary hover:text-primary hover:bg-primary/5 cursor-pointer transition-colors">
+                                    <Upload className="h-6 w-6 mb-1" />
+                                    <span className="text-xs font-bold">Añadir más</span>
+                                    <input type="file" multiple accept="image/*" className="hidden" onChange={handleGallerySelect} />
+                                </label>
+                            </div>
+                        </div>
+
                     </div>
 
                     {/* Submit */}

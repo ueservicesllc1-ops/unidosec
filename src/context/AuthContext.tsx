@@ -3,9 +3,7 @@ import {
     signInWithPopup,
     GoogleAuthProvider,
     signOut,
-    onAuthStateChanged,
-    createUserWithEmailAndPassword,
-    signInWithEmailAndPassword
+    onAuthStateChanged
 } from 'firebase/auth';
 import type { User } from 'firebase/auth';
 import { auth } from '../firebase';
