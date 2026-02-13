@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Heart, Share2, User, MapPin, PlayCircle, Facebook, Link as LinkIcon, MessageCircle } from 'lucide-react';
+import { Heart, Share2, User, MapPin, Facebook, Link as LinkIcon, MessageCircle } from 'lucide-react';
 import { getRecentDonations, type CampaignData, type Donation } from '../services/campaignService';
 import PayPalDonationButton from '../components/PayPalDonationButton';
 
