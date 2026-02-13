@@ -13,6 +13,8 @@ import HowItWorks from './pages/HowItWorks';
 import Terms from './pages/Terms';
 import FAQ from './pages/FAQ';
 import TrustSafety from './pages/TrustSafety';
+import AdminDashboard from './pages/AdminDashboard';
+import { AdminRoute } from './components/AdminRoute';
 
 function App() {
   return (
@@ -31,6 +33,14 @@ function App() {
               <Route path="/faq" element={<FAQ />} />
               <Route path="/trust" element={<TrustSafety />} />
               <Route path="/campaign/:id" element={<CampaignDetails />} />
+              <Route
+                path="/admin"
+                element={
+                  <AdminRoute>
+                    <AdminDashboard />
+                  </AdminRoute>
+                }
+              />
               <Route
                 path="/start-campaign"
                 element={

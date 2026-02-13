@@ -10,6 +10,7 @@ interface Campaign extends CampaignData {
     currentAmount: number;
     donorCount: number;
     createdAt: any;
+    status?: string;
 }
 
 const Explore = () => {
@@ -55,7 +56,8 @@ const Explore = () => {
         const matchesSearch = camp.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
             camp.description.toLowerCase().includes(searchQuery.toLowerCase());
         const matchesCategory = selectedCategory ? camp.category === selectedCategory : true;
-        return matchesSearch && matchesCategory;
+        const isVisible = camp.status !== 'hidden' && camp.status !== 'reported';
+        return matchesSearch && matchesCategory && isVisible;
     });
 
     return (

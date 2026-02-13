@@ -2,8 +2,10 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Heart, Share2, User, MapPin, Facebook, Link as LinkIcon, MessageCircle } from 'lucide-react';
+import { Heart, Share2, User, MapPin, Facebook, Link as LinkIcon, MessageCircle, Landmark, X } from 'lucide-react';
 import { getRecentDonations, type CampaignData, type Donation } from '../services/campaignService';
+import { useAuth } from '../context/AuthContext';
+import { createWithdrawalRequest } from '../services/withdrawalService';
 import PayPalDonationButton from '../components/PayPalDonationButton';
 
 // Helper to extract YouTube ID
@@ -29,9 +31,26 @@ interface Campaign extends CampaignData {
 
 const CampaignDetails = () => {
     const { id } = useParams<{ id: string }>();
+    const { user } = useAuth();
     const [campaign, setCampaign] = useState<Campaign | null>(null);
     const [loading, setLoading] = useState(true);
     const [recentDonations, setRecentDonations] = useState<Donation[]>([]);
+
+    // Withdrawal state
+    const [showWithdrawalModal, setShowWithdrawalModal] = useState(false);
+    const [isSubmittingWithdrawal, setIsSubmittingWithdrawal] = useState(false);
+    const [withdrawalFormData, setWithdrawalFormData] = useState({
+        firstName: '',
+        lastName: '',
+        idNumber: '',
+        phone: '',
+        email: '',
+        address: '',
+        ruc: '',
+        bankAccountNumber: '',
+        bankName: '',
+        accountType: 'ahorros'
+    });
 
     const fetchData = async () => {
         if (!id) return;
@@ -65,6 +84,31 @@ const CampaignDetails = () => {
         // Refresh data to show new donation and updated amount
         fetchData();
     };
+
+    const handleWithdrawalSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!campaign) return;
+
+        setIsSubmittingWithdrawal(true);
+        try {
+            await createWithdrawalRequest({
+                campaignId: campaign.id,
+                campaignTitle: campaign.title,
+                organizerEmail: campaign.organizer.email,
+                ...withdrawalFormData,
+                amountRequested: campaign.currentAmount
+            });
+            alert("Solicitud de retiro enviada correctamente. Nuestro equipo la revisará pronto.");
+            setShowWithdrawalModal(false);
+        } catch (error) {
+            console.error(error);
+            alert("Error al enviar la solicitud.");
+        } finally {
+            setIsSubmittingWithdrawal(false);
+        }
+    };
+
+    const isOrganizer = user && campaign && (user.email === campaign.organizer.email);
 
     if (loading) return <div className="flex justify-center items-center h-screen"><div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div></div>;
     if (!campaign) return <div className="text-center py-20">Campaña no encontrada</div>;
@@ -198,6 +242,15 @@ const CampaignDetails = () => {
                                 <button className="w-full bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 font-bold py-3 px-4 rounded-xl transition flex items-center justify-center shadow-sm">
                                     <Share2 className="h-5 w-5 mr-2" /> Compartir Campaña
                                 </button>
+
+                                {isOrganizer && (
+                                    <button
+                                        onClick={() => setShowWithdrawalModal(true)}
+                                        className="w-full bg-slate-900 text-white font-bold py-3 px-4 rounded-xl transition flex items-center justify-center shadow-lg hover:bg-slate-800"
+                                    >
+                                        <Landmark className="h-5 w-5 mr-2 text-primary" /> Solicitar Retiro de Fondos
+                                    </button>
+                                )}
                             </div>
 
                             {/* Mini Recent Donations */}
@@ -265,6 +318,150 @@ const CampaignDetails = () => {
                     </div>
                 </div>
             </div>
+
+            {/* Withdrawal Modal */}
+            {showWithdrawalModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl animate-in fade-in zoom-in duration-200">
+                        <div className="sticky top-0 bg-white border-b border-gray-100 p-6 flex items-center justify-between z-10">
+                            <h2 className="text-xl font-bold text-gray-900 flex items-center">
+                                <Landmark className="h-6 w-6 text-primary mr-3" /> Solicitud de Retiro de Fondos
+                            </h2>
+                            <button onClick={() => setShowWithdrawalModal(false)} className="p-2 hover:bg-gray-100 rounded-full transition">
+                                <X className="h-6 w-6 text-gray-400" />
+                            </button>
+                        </div>
+
+                        <form onSubmit={handleWithdrawalSubmit} className="p-6 space-y-6">
+                            <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 mb-6">
+                                <p className="text-sm text-blue-800 flex items-start">
+                                    <span className="mr-2 italic font-bold">Nota:</span>
+                                    Estás solicitando el retiro de <strong>${campaign.currentAmount.toLocaleString()}</strong> recaudados hasta el momento.
+                                </p>
+                            </div>
+
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div className="space-y-2">
+                                    <label className="text-sm font-bold text-gray-700">Nombre</label>
+                                    <input
+                                        required
+                                        type="text"
+                                        className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                                        value={withdrawalFormData.firstName}
+                                        onChange={(e) => setWithdrawalFormData({ ...withdrawalFormData, firstName: e.target.value })}
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-sm font-bold text-gray-700">Apellido</label>
+                                    <input
+                                        required
+                                        type="text"
+                                        className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                                        value={withdrawalFormData.lastName}
+                                        onChange={(e) => setWithdrawalFormData({ ...withdrawalFormData, lastName: e.target.value })}
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-sm font-bold text-gray-700">Cédula de Identidad</label>
+                                    <input
+                                        required
+                                        type="text"
+                                        className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                                        value={withdrawalFormData.idNumber}
+                                        onChange={(e) => setWithdrawalFormData({ ...withdrawalFormData, idNumber: e.target.value })}
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-sm font-bold text-gray-700">Teléfono</label>
+                                    <input
+                                        required
+                                        type="tel"
+                                        className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                                        value={withdrawalFormData.phone}
+                                        onChange={(e) => setWithdrawalFormData({ ...withdrawalFormData, phone: e.target.value })}
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-sm font-bold text-gray-700">Email de contacto</label>
+                                    <input
+                                        required
+                                        type="email"
+                                        className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                                        value={withdrawalFormData.email}
+                                        onChange={(e) => setWithdrawalFormData({ ...withdrawalFormData, email: e.target.value })}
+                                    />
+                                </div>
+                                <div className="space-y-2">
+                                    <label className="text-sm font-bold text-gray-700">RUC (Opcional)</label>
+                                    <input
+                                        type="text"
+                                        className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                                        value={withdrawalFormData.ruc}
+                                        onChange={(e) => setWithdrawalFormData({ ...withdrawalFormData, ruc: e.target.value })}
+                                    />
+                                </div>
+                                <div className="md:col-span-2 space-y-2">
+                                    <label className="text-sm font-bold text-gray-700">Dirección Domiciliaria</label>
+                                    <input
+                                        required
+                                        type="text"
+                                        className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                                        value={withdrawalFormData.address}
+                                        onChange={(e) => setWithdrawalFormData({ ...withdrawalFormData, address: e.target.value })}
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="pt-4 space-y-4">
+                                <h3 className="font-bold text-gray-900 flex items-center">
+                                    <span className="bg-primary/10 text-primary p-2 rounded-lg mr-2">🏦</span> Datos Bancarios
+                                </h3>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div className="space-y-2">
+                                        <label className="text-sm font-bold text-gray-700">Nombre del Banco</label>
+                                        <input
+                                            required
+                                            type="text"
+                                            className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                                            value={withdrawalFormData.bankName}
+                                            onChange={(e) => setWithdrawalFormData({ ...withdrawalFormData, bankName: e.target.value })}
+                                        />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label className="text-sm font-bold text-gray-700">Tipo de Cuenta</label>
+                                        <select
+                                            className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                                            value={withdrawalFormData.accountType}
+                                            onChange={(e) => setWithdrawalFormData({ ...withdrawalFormData, accountType: e.target.value })}
+                                        >
+                                            <option value="ahorros">Ahorros</option>
+                                            <option value="corriente">Corriente</option>
+                                        </select>
+                                    </div>
+                                    <div className="md:col-span-2 space-y-2">
+                                        <label className="text-sm font-bold text-gray-700">Número de Cuenta</label>
+                                        <input
+                                            required
+                                            type="text"
+                                            className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                                            value={withdrawalFormData.bankAccountNumber}
+                                            onChange={(e) => setWithdrawalFormData({ ...withdrawalFormData, bankAccountNumber: e.target.value })}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <button
+                                disabled={isSubmittingWithdrawal}
+                                type="submit"
+                                className="w-full bg-primary text-white font-black py-4 rounded-xl shadow-xl shadow-primary/20 hover:scale-[1.02] active:scale-[0.98] transition disabled:opacity-50"
+                            >
+                                {isSubmittingWithdrawal ? 'Enviando...' : 'Confirmar Solicitud de Retiro'}
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
