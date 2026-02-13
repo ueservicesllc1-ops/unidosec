@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Heart, Share2, User, MapPin, Facebook, Link as LinkIcon, MessageCircle, Landmark, X, Instagram } from 'lucide-react';
+import { Heart, Share2, User, MapPin, Facebook, Link as LinkIcon, MessageCircle, Landmark, X, Instagram, QrCode, Download } from 'lucide-react';
+import { QRCodeCanvas } from 'qrcode.react';
 import { getRecentDonations, type CampaignData, type Donation } from '../services/campaignService';
 import { useAuth } from '../context/AuthContext';
 import { createWithdrawalRequest } from '../services/withdrawalService';
@@ -51,6 +52,8 @@ const CampaignDetails = () => {
         bankName: '',
         accountType: 'ahorros'
     });
+
+    const [showQRModal, setShowQRModal] = useState(false);
 
     const fetchData = async () => {
         if (!id) return;
@@ -109,6 +112,19 @@ const CampaignDetails = () => {
     };
 
     const isOrganizer = user && campaign && (user.email === campaign.organizer.email);
+
+    const downloadQRCode = () => {
+        const canvas = document.getElementById('campaign-qr') as HTMLCanvasElement;
+        if (canvas) {
+            const pngUrl = canvas.toDataURL("image/png").replace("image/png", "image/octet-stream");
+            let downloadLink = document.createElement("a");
+            downloadLink.href = pngUrl;
+            downloadLink.download = `QR-${campaign?.title}.png`;
+            document.body.appendChild(downloadLink);
+            downloadLink.click();
+            document.body.removeChild(downloadLink);
+        }
+    };
 
     if (loading) return <div className="flex justify-center items-center h-screen"><div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div></div>;
     if (!campaign) return <div className="text-center py-20">Campaña no encontrada</div>;
@@ -193,6 +209,14 @@ const CampaignDetails = () => {
                             >
                                 <LinkIcon className="h-4 w-4" />
                                 <span className="text-[10px] font-bold hidden sm:inline">Link</span>
+                            </button>
+                            <button
+                                onClick={() => setShowQRModal(true)}
+                                className="flex items-center space-x-2 bg-slate-100 text-slate-700 px-3 py-2 rounded-lg hover:bg-slate-200 transition"
+                                title="Generar QR"
+                            >
+                                <QrCode className="h-4 w-4" />
+                                <span className="text-[10px] font-bold hidden sm:inline">QR</span>
                             </button>
                         </div>
                     </div>
@@ -472,6 +496,43 @@ const CampaignDetails = () => {
                                 {isSubmittingWithdrawal ? 'Enviando...' : 'Confirmar Solicitud de Retiro'}
                             </button>
                         </form>
+                    </div>
+                </div>
+            )}
+
+            {/* QR Code Modal */}
+            {showQRModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
+                        <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+                            <h2 className="text-xl font-bold text-gray-900 flex items-center">
+                                <QrCode className="h-5 w-5 text-primary mr-2" /> QR de la Campaña
+                            </h2>
+                            <button onClick={() => setShowQRModal(false)} className="p-2 hover:bg-gray-100 rounded-full transition">
+                                <X className="h-6 w-6 text-gray-400" />
+                            </button>
+                        </div>
+
+                        <div className="p-10 flex flex-col items-center justify-center space-y-6">
+                            <div className="bg-white p-4 rounded-2xl shadow-inner border border-gray-100">
+                                <QRCodeCanvas
+                                    id="campaign-qr"
+                                    value={window.location.href}
+                                    size={200}
+                                    level="H"
+                                    includeMargin={true}
+                                />
+                            </div>
+                            <p className="text-center text-sm text-gray-500 font-medium">
+                                Escanea este código para ir directo a la campaña.
+                            </p>
+                            <button
+                                onClick={downloadQRCode}
+                                className="w-full bg-slate-900 text-white font-bold py-3 px-4 rounded-xl flex items-center justify-center hover:bg-slate-800 transition"
+                            >
+                                <Download className="h-5 w-5 mr-2" /> Guardar imagen QR
+                            </button>
+                        </div>
                     </div>
                 </div>
             )}
