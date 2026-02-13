@@ -31,7 +31,8 @@ export interface Donation {
 
 export const uploadImage = async (file: File): Promise<string> => {
     try {
-        const storageRef = ref(storage, `campaigns/${Date.now()}_${file.name}`);
+        const cleanFileName = file.name.replace(/[^a-z0-9.]/gi, '_').toLowerCase();
+        const storageRef = ref(storage, `campaigns/${Date.now()}_${cleanFileName}`);
         const snapshot = await uploadBytes(storageRef, file);
         const downloadURL = await getDownloadURL(snapshot.ref);
         return downloadURL;

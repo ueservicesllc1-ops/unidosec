@@ -32,6 +32,13 @@ const StartCampaign = () => {
     const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files && e.target.files[0]) {
             const file = e.target.files[0];
+
+            // Limit to 5MB for mobile stability
+            if (file.size > 5 * 1024 * 1024) {
+                alert("La imagen es muy pesada (máximo 5MB). Por favor elige una más pequeña o comprímela.");
+                return;
+            }
+
             setSelectedImage(file);
             const reader = new FileReader();
             reader.onloadend = () => {
@@ -44,15 +51,35 @@ const StartCampaign = () => {
     const handleGallerySelect = (e: React.ChangeEvent<HTMLInputElement>) => {
         if (e.target.files) {
             const files = Array.from(e.target.files);
-            setGalleryImages(prev => [...prev, ...files]);
 
-            const newPreviews = files.map(file => URL.createObjectURL(file));
+            // Check sizes
+            const oversized = files.filter(f => f.size > 5 * 1024 * 1024);
+            if (oversized.length > 0) {
+                alert("Algunas imágenes de la galería superan los 5MB y han sido descartadas.");
+            }
+
+            const validFiles = files.filter(f => f.size <= 5 * 1024 * 1024);
+            setGalleryImages(prev => [...prev, ...validFiles]);
+
+            const newPreviews = validFiles.map(file => URL.createObjectURL(file));
             setGalleryPreviews(prev => [...prev, ...newPreviews]);
         }
     };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+
+        const goalNum = Number(formData.goal);
+        if (isNaN(goalNum) || goalNum <= 0) {
+            alert("Por favor ingresa una meta válida (número mayor a 0).");
+            return;
+        }
+
+        if (!selectedImage) {
+            alert("Por favor selecciona una imagen principal para tu campaña.");
+            return;
+        }
+
         setIsSubmitting(true);
 
         try {
@@ -89,9 +116,17 @@ const StartCampaign = () => {
             });
 
             navigate(`/campaign/${campaignId}`);
-        } catch (error) {
-            console.error(error);
-            alert('Error al crear la campaña.');
+        } catch (error: any) {
+            console.error("Full error detail:", error);
+            const errorMessage = error.message || "Error desconocido";
+
+            if (errorMessage.includes("permission-denied")) {
+                alert("Error de permisos: No pudimos guardar la campaña. Por favor contacta al soporte técnico.");
+            } else if (errorMessage.includes("quota-exceeded")) {
+                alert("El almacenamiento está lleno. Intenta con imágenes más pequeñas.");
+            } else {
+                alert(`Error al crear la campaña: ${errorMessage}`);
+            }
         } finally {
             setIsSubmitting(false);
         }
