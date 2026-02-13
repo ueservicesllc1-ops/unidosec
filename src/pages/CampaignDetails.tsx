@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Heart, Share2, User, MapPin, Facebook, Link as LinkIcon, MessageCircle, Landmark, X } from 'lucide-react';
+import { Heart, Share2, User, MapPin, Facebook, Link as LinkIcon, MessageCircle, Landmark, X, Instagram } from 'lucide-react';
 import { getRecentDonations, type CampaignData, type Donation } from '../services/campaignService';
 import { useAuth } from '../context/AuthContext';
 import { createWithdrawalRequest } from '../services/withdrawalService';
@@ -162,24 +162,37 @@ const CampaignDetails = () => {
                     {/* Social Share Bar */}
                     <div className="flex items-center justify-between bg-gray-50 p-4 rounded-xl border border-gray-100">
                         <span className="font-bold text-gray-700 text-sm">Comparte esta causa:</span>
-                        <div className="flex space-x-3">
-                            <button className="flex items-center space-x-2 bg-[#1877F2] text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition">
+                        <div className="flex space-x-2">
+                            <button
+                                onClick={() => window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(window.location.href)}`, '_blank')}
+                                className="flex items-center space-x-2 bg-[#1877F2] text-white px-3 py-2 rounded-lg hover:bg-blue-700 transition"
+                            >
                                 <Facebook className="h-4 w-4" />
-                                <span className="text-xs font-bold hidden sm:inline">Facebook</span>
+                                <span className="text-[10px] font-bold hidden sm:inline">Facebook</span>
                             </button>
-                            <button className="flex items-center space-x-2 bg-[#25D366] text-white px-4 py-2 rounded-lg hover:bg-green-600 transition">
+                            <button
+                                onClick={() => window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(`Mira esta campaña en EcuFund: ${campaign.title} ${window.location.href}`)}`, '_blank')}
+                                className="flex items-center space-x-2 bg-[#25D366] text-white px-3 py-2 rounded-lg hover:bg-green-600 transition"
+                            >
                                 <MessageCircle className="h-4 w-4" />
-                                <span className="text-xs font-bold hidden sm:inline">WhatsApp</span>
+                                <span className="text-[10px] font-bold hidden sm:inline">WhatsApp</span>
+                            </button>
+                            <button
+                                onClick={() => alert('Para Instagram, te recomendamos copiar el link y pegarlo en tu biografía o historias.')}
+                                className="flex items-center space-x-2 bg-[#E4405F] text-white px-3 py-2 rounded-lg hover:bg-[#d62e4c] transition"
+                            >
+                                <Instagram className="h-4 w-4" />
+                                <span className="text-[10px] font-bold hidden sm:inline">Instagram</span>
                             </button>
                             <button
                                 onClick={() => {
                                     navigator.clipboard.writeText(window.location.href);
-                                    alert('¡Enlace copiado!');
+                                    alert('¡Enlace copiado al portapapeles!');
                                 }}
-                                className="flex items-center space-x-2 bg-gray-200 text-gray-700 px-4 py-2 rounded-lg hover:bg-gray-300 transition"
+                                className="flex items-center space-x-2 bg-gray-200 text-gray-700 px-3 py-2 rounded-lg hover:bg-gray-300 transition"
                             >
                                 <LinkIcon className="h-4 w-4" />
-                                <span className="text-xs font-bold hidden sm:inline">Copiar</span>
+                                <span className="text-[10px] font-bold hidden sm:inline">Link</span>
                             </button>
                         </div>
                     </div>
