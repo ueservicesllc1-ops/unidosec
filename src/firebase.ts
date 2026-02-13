@@ -2,15 +2,16 @@ import { initializeApp } from "firebase/app";
 import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
+import { getAnalytics } from "firebase/analytics";
 
 const firebaseConfig = {
-    apiKey: "AIzaSyANDPmm9TZzYsgLhzg5vrpO9BIWgeWRcsA",
-    authDomain: "infieles-29223.firebaseapp.com",
-    projectId: "infieles-29223",
-    storageBucket: "infieles-29223.firebasestorage.app",
-    messagingSenderId: "588069651968",
-    appId: "1:588069651968:web:f1ac85609d696c42bc3ae5",
-    measurementId: "G-809D3QQC9J"
+    apiKey: "AIzaSyA8KgKgKwUUP5EvygpcL8gOk7W5ELaeH6M",
+    authDomain: "unidosec.firebaseapp.com",
+    projectId: "unidosec",
+    storageBucket: "unidosec.firebasestorage.app",
+    messagingSenderId: "867537820786",
+    appId: "1:867537820786:web:dfef1bf862aba63e5236eb",
+    measurementId: "G-7Y9SPY5NSB"
 };
 
 // Initialize Firebase
@@ -18,4 +19,5 @@ const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+export const analytics = typeof window !== 'undefined' ? getAnalytics(app) : null;
 export default app;
