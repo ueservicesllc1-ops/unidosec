@@ -16,9 +16,11 @@ import {
     Edit3,
     Check,
     X,
+    CheckCircle2,
+    Plus,
+    Coins,
     Landmark,
-    Clock,
-    CheckCircle2
+    Clock
 } from 'lucide-react';
 import {
     getAllCampaigns,
@@ -28,7 +30,8 @@ import {
     getAllUsers,
     deleteUser,
     updateDonation,
-    deleteDonation
+    deleteDonation,
+    addManualDonation
 } from '../services/adminService';
 import { getAllWithdrawalRequests, type WithdrawalRequest } from '../services/withdrawalService';
 import { Link } from 'react-router-dom';
@@ -241,6 +244,9 @@ const CampaignsView = () => {
     const [campaigns, setCampaigns] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
 
+    const [showDonationModal, setShowDonationModal] = useState(false);
+    const [selectedCampaign, setSelectedCampaign] = useState<any>(null);
+
     const fetchData = async () => {
         setLoading(true);
         try {
@@ -334,6 +340,16 @@ const CampaignsView = () => {
                                 </td>
                                 <td className="px-6 py-4 text-right">
                                     <div className="flex items-center justify-end space-x-1">
+                                        <button
+                                            onClick={() => {
+                                                setSelectedCampaign(camp);
+                                                setShowDonationModal(true);
+                                            }}
+                                            className="p-2 text-primary hover:bg-primary/5 rounded-lg transition-colors"
+                                            title="Añadir Fondos"
+                                        >
+                                            <Plus className="w-4 h-4" />
+                                        </button>
                                         <Link to={`/campaign/${camp.id}`} target="_blank" className="p-2 text-gray-400 hover:text-primary transition-colors hover:bg-primary/5 rounded-lg" title="Ver"><Eye className="w-4 h-4" /></Link>
                                         <button onClick={() => handleStatus(camp.id, 'approved')} className="p-2 text-gray-400 hover:text-green-500 transition-colors hover:bg-green-50 rounded-lg" title="Aprobar"><CheckCircle className="w-4 h-4" /></button>
                                         <button onClick={() => handleStatus(camp.id, 'hidden')} className="p-2 text-gray-400 hover:text-amber-500 transition-colors hover:bg-amber-50 rounded-lg" title="Ocultar"><XCircle className="w-4 h-4" /></button>
@@ -344,6 +360,107 @@ const CampaignsView = () => {
                         ))}
                     </tbody>
                 </table>
+            </div>
+
+            {showDonationModal && selectedCampaign && (
+                <ManualDonationModal
+                    campaign={selectedCampaign}
+                    onClose={() => {
+                        setShowDonationModal(false);
+                        setSelectedCampaign(null);
+                    }}
+                    onSuccess={() => {
+                        setShowDonationModal(false);
+                        setSelectedCampaign(null);
+                        fetchData();
+                    }}
+                />
+            )}
+        </div>
+    );
+};
+
+const ManualDonationModal = ({ campaign, onClose, onSuccess }: { campaign: any, onClose: () => void, onSuccess: () => void }) => {
+    const [donorName, setDonorName] = useState("");
+    const [amount, setAmount] = useState("");
+    const [loading, setLoading] = useState(false);
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        const amt = parseFloat(amount);
+        if (isNaN(amt) || amt <= 0) {
+            alert("Monto inválido");
+            return;
+        }
+        if (!donorName.trim()) {
+            alert("Nombre de donante requerido");
+            return;
+        }
+
+        setLoading(true);
+        try {
+            await addManualDonation(campaign.id, amt, donorName);
+            onSuccess();
+        } catch (error) {
+            alert("Error al añadir fondos");
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+            <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in fade-in zoom-in duration-200">
+                <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+                    <h2 className="text-xl font-bold text-gray-900 flex items-center px-2">
+                        <Coins className="h-5 w-5 text-emerald-500 mr-2" /> Añadir Fondos
+                    </h2>
+                    <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-full transition">
+                        <X className="h-6 w-6 text-gray-400" />
+                    </button>
+                </div>
+
+                <div className="p-6">
+                    <div className="mb-6 p-4 bg-emerald-50 border border-emerald-100 rounded-xl">
+                        <p className="text-xs text-emerald-700 font-bold uppercase tracking-wider mb-1">Campaña Destino</p>
+                        <p className="text-sm font-black text-emerald-900 truncate">{campaign.title}</p>
+                    </div>
+
+                    <form onSubmit={handleSubmit} className="space-y-4">
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1 px-1">Nombre del Donante</label>
+                            <input
+                                type="text"
+                                required
+                                value={donorName}
+                                onChange={(e) => setDonorName(e.target.value)}
+                                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all outline-none"
+                                placeholder="Ej: Donación Anónima / Juan Pérez"
+                            />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-bold text-gray-500 uppercase tracking-wider mb-1 px-1">Monto ($)</label>
+                            <input
+                                type="number"
+                                required
+                                min="0.01"
+                                step="0.01"
+                                value={amount}
+                                onChange={(e) => setAmount(e.target.value)}
+                                className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-4 focus:ring-primary/10 focus:border-primary transition-all outline-none text-2xl font-black text-emerald-600"
+                                placeholder="0.00"
+                            />
+                        </div>
+
+                        <button
+                            type="submit"
+                            disabled={loading}
+                            className="w-full bg-slate-900 text-white font-black py-4 rounded-xl flex items-center justify-center hover:bg-slate-800 transition active:scale-[0.98] disabled:opacity-50 mt-6 shadow-xl shadow-slate-200"
+                        >
+                            {loading ? <RefreshCw className="w-6 h-6 animate-spin" /> : "AÑADIR FONDOS AHORA"}
+                        </button>
+                    </form>
+                </div>
             </div>
         </div>
     );
@@ -637,8 +754,8 @@ const WithdrawalsView = () => {
                                 </td>
                                 <td className="px-6 py-4 text-center">
                                     <span className={`inline-flex items-center px-2 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider ${req.status === 'pending' ? 'bg-amber-100 text-amber-700' :
-                                            req.status === 'completed' ? 'bg-green-100 text-green-700' :
-                                                'bg-gray-100 text-gray-600'
+                                        req.status === 'completed' ? 'bg-green-100 text-green-700' :
+                                            'bg-gray-100 text-gray-600'
                                         }`}>
                                         {req.status === 'pending' ? <Clock className="w-3 h-3 mr-1" /> : <CheckCircle2 className="w-3 h-3 mr-1" />}
                                         {req.status === 'pending' ? 'Pendiente' : 'Completado'}

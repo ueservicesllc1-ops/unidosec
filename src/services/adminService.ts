@@ -8,7 +8,8 @@ import {
     query,
     orderBy,
     runTransaction,
-    increment
+    increment,
+    serverTimestamp
 } from 'firebase/firestore';
 
 export const getAllCampaigns = async () => {
@@ -126,6 +127,32 @@ export const deleteDonation = async (campaignId: string, donationId: string) => 
         });
     } catch (error) {
         console.error("Error deleting donation transaction:", error);
+        throw error;
+    }
+};
+
+export const addManualDonation = async (campaignId: string, amount: number, donorName: string) => {
+    try {
+        await runTransaction(db, async (transaction) => {
+            const campaignRef = doc(db, "campaigns", campaignId);
+            const donationsRef = collection(db, "campaigns", campaignId, "donations");
+            const newDonationRef = doc(donationsRef);
+
+            transaction.set(newDonationRef, {
+                amount,
+                donorName,
+                isAnonymous: false,
+                isManual: true,
+                createdAt: serverTimestamp()
+            });
+
+            transaction.update(campaignRef, {
+                currentAmount: increment(amount),
+                donorCount: increment(1)
+            });
+        });
+    } catch (error) {
+        console.error("Error adding manual donation:", error);
         throw error;
     }
 };
