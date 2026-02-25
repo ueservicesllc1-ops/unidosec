@@ -179,7 +179,7 @@ const CampaignDetails = () => {
     const progress = Math.min((campaign.currentAmount / campaign.goal) * 100, 100);
 
     const campaignUrl = window.location.href;
-    const ogImage = campaign.imageUrl || 'https://unidosecuador.org/logo.png';
+    const ogImage = campaign.imageUrl || 'https://images.unsplash.com/photo-1593113598332-cd288d649433?auto=format&fit=crop&w=1200&h=630&q=80';
     const ogDescription = campaign.description
         ? campaign.description.slice(0, 160).replace(/\n/g, ' ')
         : `Apoya la campaña "${campaign.title}" en EcuFund. ¡Tu donación hace la diferencia!`;
