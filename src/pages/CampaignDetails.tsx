@@ -171,7 +171,7 @@ const CampaignDetails = () => {
     const progress = Math.min((campaign.currentAmount / campaign.goal) * 100, 100);
 
     const campaignUrl = window.location.href;
-    const ogImage = campaign.imageUrl || 'https://unidosec.web.app/og-image.jpg';
+    const ogImage = campaign.imageUrl || 'https://unidosec.web.app/og-image.svg';
     const ogDescription = campaign.description
         ? campaign.description.slice(0, 160).replace(/\n/g, ' ')
         : `Apoya la campaña "${campaign.title}" en EcuFund. ¡Tu donación hace la diferencia!`;

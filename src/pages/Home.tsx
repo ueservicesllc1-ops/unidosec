@@ -134,10 +134,7 @@ const Home = () => {
                 {/* Featured Campaigns */}
                 <section>
                     <div className="flex justify-between items-end mb-8">
-                        <div>
-                            <h2 className="text-2xl md:text-3xl font-bold text-gray-900">Campañas Recientes</h2>
-                            <p className="text-[10px] text-gray-400">v1.1 - Likes & Share Enabled</p>
-                        </div>
+                        <h2 className="text-2xl md:text-3xl font-bold text-gray-900">Campañas Recientes</h2>
                     </div>
 
                     {loading ? (
