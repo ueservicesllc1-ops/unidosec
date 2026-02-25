@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
+import { Helmet } from 'react-helmet-async';
 import { useParams } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { Heart, Share2, User, MapPin, Facebook, Link as LinkIcon, MessageCircle, Landmark, X, Instagram, QrCode, Download } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
-import { getRecentDonations, type CampaignData, type Donation } from '../services/campaignService';
+import { getRecentDonations, toggleCampaignLike, type CampaignData, type Donation } from '../services/campaignService';
 import { useAuth } from '../context/AuthContext';
 import { createWithdrawalRequest } from '../services/withdrawalService';
 import PayPalDonationButton from '../components/PayPalDonationButton';
@@ -26,8 +27,10 @@ interface Campaign extends CampaignData {
     currentAmount: number;
     donorCount: number;
     createdAt: any;
-    videoUrl?: string;          // New field
-    additionalImages?: string[]; // New field
+    videoUrl?: string;
+    additionalImages?: string[];
+    likesCount?: number;
+    likedBy?: string[];
 }
 
 const CampaignDetails = () => {
@@ -36,6 +39,8 @@ const CampaignDetails = () => {
     const [campaign, setCampaign] = useState<Campaign | null>(null);
     const [loading, setLoading] = useState(true);
     const [recentDonations, setRecentDonations] = useState<Donation[]>([]);
+    const [likeLoading, setLikeLoading] = useState(false);
+    const [likeAnimating, setLikeAnimating] = useState(false);
 
     // Withdrawal state
     const [showWithdrawalModal, setShowWithdrawalModal] = useState(false);
@@ -113,6 +118,40 @@ const CampaignDetails = () => {
 
     const isOrganizer = user && campaign && (user.email === campaign.organizer.email);
 
+    const hasLiked = !!(user && campaign?.likedBy?.includes(user.uid));
+    const likesCount = campaign?.likesCount ?? 0;
+
+    const handleLike = async () => {
+        if (!user) {
+            alert('Debes iniciar sesión para dar Me gusta.');
+            return;
+        }
+        if (!campaign || likeLoading) return;
+        setLikeLoading(true);
+        setLikeAnimating(true);
+        setTimeout(() => setLikeAnimating(false), 400);
+        // Optimistic UI update
+        setCampaign(prev => {
+            if (!prev) return prev;
+            const alreadyLiked = prev.likedBy?.includes(user.uid);
+            return {
+                ...prev,
+                likesCount: (prev.likesCount ?? 0) + (alreadyLiked ? -1 : 1),
+                likedBy: alreadyLiked
+                    ? (prev.likedBy ?? []).filter(uid => uid !== user.uid)
+                    : [...(prev.likedBy ?? []), user.uid]
+            };
+        });
+        try {
+            await toggleCampaignLike(campaign.id, user.uid, hasLiked);
+        } catch (e) {
+            console.error(e);
+            fetchData(); // rollback on error
+        } finally {
+            setLikeLoading(false);
+        }
+    };
+
     const downloadQRCode = () => {
         const canvas = document.getElementById('campaign-qr') as HTMLCanvasElement;
         if (canvas) {
@@ -131,8 +170,36 @@ const CampaignDetails = () => {
 
     const progress = Math.min((campaign.currentAmount / campaign.goal) * 100, 100);
 
+    const campaignUrl = window.location.href;
+    const ogImage = campaign.imageUrl || 'https://unidosec.web.app/og-image.jpg';
+    const ogDescription = campaign.description
+        ? campaign.description.slice(0, 160).replace(/\n/g, ' ')
+        : `Apoya la campaña "${campaign.title}" en EcuFund. ¡Tu donación hace la diferencia!`;
+
     return (
         <div className="max-w-6xl mx-auto px-4 pb-12 pt-6">
+            <Helmet>
+                <title>{campaign.title} | EcuFund</title>
+                <meta name="description" content={ogDescription} />
+
+                {/* Open Graph / Facebook */}
+                <meta property="og:type" content="website" />
+                <meta property="og:url" content={campaignUrl} />
+                <meta property="og:title" content={`${campaign.title} | EcuFund`} />
+                <meta property="og:description" content={ogDescription} />
+                <meta property="og:image" content={ogImage} />
+                <meta property="og:image:width" content="1200" />
+                <meta property="og:image:height" content="630" />
+                <meta property="og:site_name" content="EcuFund" />
+                <meta property="og:locale" content="es_EC" />
+
+                {/* Twitter Card */}
+                <meta name="twitter:card" content="summary_large_image" />
+                <meta name="twitter:url" content={campaignUrl} />
+                <meta name="twitter:title" content={`${campaign.title} | EcuFund`} />
+                <meta name="twitter:description" content={ogDescription} />
+                <meta name="twitter:image" content={ogImage} />
+            </Helmet>
 
             {/* FLATTENED GRID: Allows interleaving content for Mobile/Desktop */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
@@ -176,9 +243,28 @@ const CampaignDetails = () => {
                     )}
 
                     {/* Social Share Bar */}
-                    <div className="flex items-center justify-between bg-gray-50 p-4 rounded-xl border border-gray-100">
-                        <span className="font-bold text-gray-700 text-sm">Comparte esta causa:</span>
-                        <div className="flex space-x-2">
+                    <div className="flex flex-wrap items-center gap-3 bg-gray-50 p-4 rounded-xl border border-gray-100">
+                        <span className="font-bold text-gray-700 text-sm flex-1 min-w-max">Comparte esta causa:</span>
+                        <div className="flex flex-wrap gap-2">
+                            {/* Like Button */}
+                            <button
+                                onClick={handleLike}
+                                disabled={likeLoading}
+                                className={`flex items-center space-x-1.5 px-3 py-2 rounded-lg font-bold text-[10px] transition-all duration-200 border-2 ${hasLiked
+                                    ? 'bg-pink-500 border-pink-500 text-white shadow-md shadow-pink-200'
+                                    : 'bg-white border-pink-200 text-pink-500 hover:bg-pink-50'
+                                    }`}
+                                title={hasLiked ? 'Quitar Me gusta' : 'Me gusta'}
+                            >
+                                <Heart
+                                    className={`h-4 w-4 transition-transform duration-200 ${likeAnimating ? 'scale-150' : 'scale-100'
+                                        }`}
+                                    fill={hasLiked ? 'currentColor' : 'none'}
+                                />
+                                <span className="hidden sm:inline">{hasLiked ? 'Me gusta' : 'Me gusta'}</span>
+                                <span className="font-black tabular-nums">{likesCount > 0 ? likesCount : ''}</span>
+                            </button>
+
                             <button
                                 onClick={() => window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(window.location.href)}`, '_blank')}
                                 className="flex items-center space-x-2 bg-[#1877F2] text-white px-3 py-2 rounded-lg hover:bg-blue-700 transition"
@@ -275,6 +361,28 @@ const CampaignDetails = () => {
                                         onSuccess={handleDonationSuccess}
                                     />
                                 </div>
+
+                                {/* Like Button (Sidebar) */}
+                                <button
+                                    onClick={handleLike}
+                                    disabled={likeLoading}
+                                    className={`w-full font-bold py-3 px-4 rounded-xl transition-all duration-200 flex items-center justify-center gap-2 border-2 ${hasLiked
+                                        ? 'bg-pink-500 border-pink-500 text-white shadow-lg shadow-pink-200'
+                                        : 'bg-white border-pink-200 text-pink-500 hover:bg-pink-50'
+                                        }`}
+                                >
+                                    <Heart
+                                        className={`h-5 w-5 transition-transform duration-200 ${likeAnimating ? 'scale-150' : 'scale-100'
+                                            }`}
+                                        fill={hasLiked ? 'currentColor' : 'none'}
+                                    />
+                                    <span>{hasLiked ? '¡Te gusta!' : 'Me gusta'}</span>
+                                    {likesCount > 0 && (
+                                        <span className="ml-auto bg-white/30 text-current font-black text-sm px-2 py-0.5 rounded-full">
+                                            {likesCount}
+                                        </span>
+                                    )}
+                                </button>
 
                                 <button className="w-full bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 font-bold py-3 px-4 rounded-xl transition flex items-center justify-center shadow-sm">
                                     <Share2 className="h-5 w-5 mr-2" /> Compartir Campaña

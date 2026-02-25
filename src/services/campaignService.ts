@@ -1,5 +1,5 @@
 import { db, storage } from '../firebase';
-import { collection, addDoc, serverTimestamp, DocumentReference, doc, updateDoc, increment, getDoc, query, orderBy, limit, getDocs } from 'firebase/firestore';
+import { collection, addDoc, serverTimestamp, DocumentReference, doc, updateDoc, increment, getDoc, query, orderBy, limit, getDocs, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 export interface CampaignData {
@@ -97,6 +97,27 @@ export const getRecentDonations = async (campaignId: string): Promise<Donation[]
     } catch (error) {
         console.error("Error getting donations: ", error);
         return [];
+    }
+};
+
+/**
+ * Toggles a like on a campaign for a given user.
+ * Uses arrayUnion/arrayRemove so each user can only like once.
+ */
+export const toggleCampaignLike = async (campaignId: string, userId: string, hasLiked: boolean): Promise<void> => {
+    const campaignRef = doc(db, 'campaigns', campaignId);
+    if (hasLiked) {
+        // Remove like
+        await updateDoc(campaignRef, {
+            likedBy: arrayRemove(userId),
+            likesCount: increment(-1)
+        });
+    } else {
+        // Add like
+        await updateDoc(campaignRef, {
+            likedBy: arrayUnion(userId),
+            likesCount: increment(1)
+        });
     }
 };
 

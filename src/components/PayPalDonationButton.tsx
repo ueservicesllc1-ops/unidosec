@@ -13,7 +13,7 @@ interface PayPalDonationButtonProps {
 const PayPalDonationButton = ({ campaignId, onSuccess, onError }: PayPalDonationButtonProps) => {
     const [isPending, setIsPending] = useState(false);
     const [showSuccess, setShowSuccess] = useState(false);
-    const [donationAmount, setDonationAmount] = useState("25");
+    const [donationAmount, setDonationAmount] = useState("10");
     const [donorName, setDonorName] = useState("");
     const [isAnonymous, setIsAnonymous] = useState(false);
 
@@ -111,6 +111,25 @@ const PayPalDonationButton = ({ campaignId, onSuccess, onError }: PayPalDonation
             <div className={`bg-gray-50 p-4 rounded-xl border border-gray-200 space-y-3 transition-opacity ${showSuccess ? 'opacity-50 pointer-events-none' : ''}`}>
                 <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Monto a donar ($)</label>
+
+                    {/* Quick-select buttons */}
+                    <div className="grid grid-cols-4 gap-2 mb-2">
+                        {['5', '10', '25', '50'].map((preset) => (
+                            <button
+                                key={preset}
+                                type="button"
+                                onClick={() => setDonationAmount(preset)}
+                                className={`py-1.5 rounded-lg text-sm font-bold border-2 transition-all duration-150 ${donationAmount === preset
+                                        ? 'bg-primary text-white border-primary shadow-md shadow-primary/20'
+                                        : 'bg-white text-gray-600 border-gray-200 hover:border-primary hover:text-primary'
+                                    }`}
+                            >
+                                ${preset}
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* Custom amount input */}
                     <div className="relative">
                         <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 font-bold">$</span>
                         <input
@@ -118,6 +137,7 @@ const PayPalDonationButton = ({ campaignId, onSuccess, onError }: PayPalDonation
                             min="1"
                             value={donationAmount}
                             onChange={(e) => setDonationAmount(e.target.value)}
+                            placeholder="Otro monto"
                             className="w-full pl-8 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary focus:border-transparent outline-none font-bold text-lg"
                         />
                     </div>

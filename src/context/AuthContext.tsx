@@ -29,14 +29,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setUser(user);
             if (user) {
                 // Save user to Firestore users collection
-                const userRef = doc(db, "users", user.uid);
-                await setDoc(userRef, {
-                    uid: user.uid,
-                    displayName: user.displayName,
-                    email: user.email,
-                    photoURL: user.photoURL,
-                    lastLogin: serverTimestamp()
-                }, { merge: true });
+                try {
+                    const userRef = doc(db, "users", user.uid);
+                    await setDoc(userRef, {
+                        uid: user.uid,
+                        displayName: user.displayName,
+                        email: user.email,
+                        photoURL: user.photoURL,
+                        lastLogin: serverTimestamp()
+                    }, { merge: true });
+                } catch (firestoreError) {
+                    // Non-critical: user is still authenticated even if profile save fails
+                    console.warn("Could not save user profile to Firestore:", firestoreError);
+                }
             }
             setLoading(false);
         });
