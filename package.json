@@ -1,13 +1,14 @@
 {
   "name": "ecufund-web",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.2",
   "type": "module",
   "engines": {
     "node": ">=20.0.0"
   },
   "scripts": {
     "dev": "vite",
+    "prebuild": "node -e \"const fs=require('fs'); if(fs.existsSync('dist')){fs.rmSync('dist', {recursive:true})}\"",
     "build": "vite build",
     "start": "serve -s dist -l $PORT"
   },
