@@ -10,6 +10,7 @@ interface Campaign extends CampaignData {
     currentAmount: number;
     donorCount: number;
     createdAt: any;
+    likesCount?: number;
 }
 
 const Home = () => {
@@ -185,6 +186,12 @@ const Home = () => {
                                                 <User className="h-4 w-4" />
                                             </div>
                                             <span className="text-sm text-gray-600 truncate flex-1">por {camp.organizer?.name || 'Anónimo'}</span>
+                                            {camp.likesCount !== undefined && camp.likesCount > 0 && (
+                                                <div className="flex items-center text-pink-500 bg-pink-50 px-2 py-0.5 rounded-full text-xs font-bold">
+                                                    <Heart className="h-3 w-3 mr-1" fill="currentColor" />
+                                                    {camp.likesCount}
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 </Link>
