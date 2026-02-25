@@ -7,7 +7,7 @@ import {
 } from 'firebase/firestore';
 import type { Unsubscribe } from 'firebase/firestore';
 
-const COUNTER_DOC = doc(db, 'analytics', 'visits');
+const COUNTER_DOC = doc(db, 'siteStats', 'visitCounter');
 
 /**
  * Increments the total visit counter by 1 in Firestore.
@@ -23,9 +23,10 @@ export async function incrementVisitCount(): Promise<void> {
             { totalVisits: increment(1) },
             { merge: true }
         );
+        console.log('✅ Visita registrada con éxito');
         sessionStorage.setItem('visit_counted', 'true');
     } catch (error) {
-        console.error('Error incrementing visit count:', error);
+        console.error('❌ Error al registrar visita:', error);
     }
 }
 
