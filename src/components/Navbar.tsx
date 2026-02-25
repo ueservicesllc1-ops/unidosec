@@ -24,8 +24,9 @@ const Navbar = () => {
 
                     {/* Left: Logo */}
                     <div className="flex-shrink-0 flex items-center">
-                        <Link to="/">
-                            <img src="/logo.png" alt="Unidos EC" className="h-10 w-auto" />
+                        <Link to="/" className="flex items-center gap-1 group">
+                            <img src="/logo.png" alt="Unidos EC" className="h-10 w-auto group-hover:scale-110 transition-transform" />
+                            <span className="text-xs">✨</span>
                         </Link>
                     </div>
 

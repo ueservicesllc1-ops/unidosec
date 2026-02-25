@@ -7,7 +7,7 @@ import {
 } from 'firebase/firestore';
 import type { Unsubscribe } from 'firebase/firestore';
 
-const COUNTER_DOC = doc(db, 'siteStats', 'visitCounter');
+const COUNTER_DOC = doc(db, 'analytics', 'visits');
 
 /**
  * Increments the total visit counter by 1 in Firestore.
