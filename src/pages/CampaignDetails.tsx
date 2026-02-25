@@ -118,32 +118,40 @@ const CampaignDetails = () => {
 
     const isOrganizer = user && campaign && (user.email === campaign.organizer.email);
 
-    const hasLiked = !!(user && campaign?.likedBy?.includes(user.uid));
+    // Get or create a persistent guest ID for anonymous likes
+    const getGuestId = () => {
+        let gid = localStorage.getItem('ecufund_guest_id');
+        if (!gid) {
+            gid = 'guest_' + Math.random().toString(36).substr(2, 9);
+            localStorage.setItem('ecufund_guest_id', gid);
+        }
+        return gid;
+    };
+
+    const effectiveUserId = user?.uid || getGuestId();
+    const hasLiked = !!(campaign?.likedBy?.includes(effectiveUserId));
     const likesCount = campaign?.likesCount ?? 0;
 
     const handleLike = async () => {
-        if (!user) {
-            alert('Debes iniciar sesión para dar Me gusta.');
-            return;
-        }
         if (!campaign || likeLoading) return;
         setLikeLoading(true);
         setLikeAnimating(true);
         setTimeout(() => setLikeAnimating(false), 400);
+
         // Optimistic UI update
         setCampaign(prev => {
             if (!prev) return prev;
-            const alreadyLiked = prev.likedBy?.includes(user.uid);
+            const alreadyLiked = prev.likedBy?.includes(effectiveUserId);
             return {
                 ...prev,
                 likesCount: (prev.likesCount ?? 0) + (alreadyLiked ? -1 : 1),
                 likedBy: alreadyLiked
-                    ? (prev.likedBy ?? []).filter(uid => uid !== user.uid)
-                    : [...(prev.likedBy ?? []), user.uid]
+                    ? (prev.likedBy ?? []).filter(uid => uid !== effectiveUserId)
+                    : [...(prev.likedBy ?? []), effectiveUserId]
             };
         });
         try {
-            await toggleCampaignLike(campaign.id, user.uid, hasLiked);
+            await toggleCampaignLike(campaign.id, effectiveUserId, hasLiked);
         } catch (e) {
             console.error(e);
             fetchData(); // rollback on error
