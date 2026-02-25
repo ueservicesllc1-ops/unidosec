@@ -15,6 +15,7 @@ import FAQ from './pages/FAQ';
 import TrustSafety from './pages/TrustSafety';
 import AdminDashboard from './pages/AdminDashboard';
 import { AdminRoute } from './components/AdminRoute';
+import VisitCounter from './components/VisitCounter';
 
 function App() {
   return (
@@ -82,8 +83,17 @@ function App() {
                 </div>
               </div>
             </div>
-            <div className="container mx-auto px-4 mt-12 pt-8 border-t border-gray-800 text-center text-sm">
-              &copy; {new Date().getFullYear()} Unidos EC. Hecho con ❤️ en Ecuador.
+            <div className="container mx-auto px-4 mt-12 pt-8 border-t border-gray-800 text-sm">
+              <div style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
+              }}>
+                <span>&copy; {new Date().getFullYear()} Unidos EC. Hecho con ❤️ en Ecuador.</span>
+                <VisitCounter />
+              </div>
             </div>
           </footer>
         </div>
