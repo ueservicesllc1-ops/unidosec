@@ -665,8 +665,6 @@ const CampaignDetails = () => {
                     </div>
                 </div>
             )}
-                </div>
-            )}
 
             {/* Full Screen Image Viewer Modal */}
             {selectedImage && (
