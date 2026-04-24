@@ -59,6 +59,7 @@ const CampaignDetails = () => {
     });
 
     const [showQRModal, setShowQRModal] = useState(false);
+    const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
     const fetchData = async () => {
         if (!id) return;
@@ -225,7 +226,12 @@ const CampaignDetails = () => {
                                 allowFullScreen
                             />
                         ) : campaign.imageUrl ? (
-                            <img src={campaign.imageUrl} alt={campaign.title} className="w-full h-full object-cover" />
+                            <img 
+                                src={campaign.imageUrl} 
+                                alt={campaign.title} 
+                                className="w-full h-full object-cover cursor-zoom-in transition-transform duration-500 hover:scale-105" 
+                                onClick={() => setSelectedImage(campaign.imageUrl)}
+                            />
                         ) : (
                             <div className="flex items-center justify-center h-full text-gray-400">
                                 <Heart className="h-16 w-16 opacity-50" />
@@ -238,12 +244,19 @@ const CampaignDetails = () => {
                         <div className="grid grid-cols-4 gap-2">
                             {/* If video exists, show main image as first gallery item */}
                             {campaign.videoUrl && campaign.imageUrl && (
-                                <div className="aspect-square rounded-lg overflow-hidden cursor-pointer border-2 border-transparent hover:border-primary">
+                                <div 
+                                    className="aspect-square rounded-lg overflow-hidden cursor-zoom-in border-2 border-transparent hover:border-primary transition-all shadow-sm"
+                                    onClick={() => setSelectedImage(campaign.imageUrl)}
+                                >
                                     <img src={campaign.imageUrl} className="w-full h-full object-cover" alt="Main" />
                                 </div>
                             )}
                             {campaign.additionalImages.map((img, idx) => (
-                                <div key={idx} className="aspect-square rounded-lg overflow-hidden cursor-pointer border-2 border-transparent hover:border-primary">
+                                <div 
+                                    key={idx} 
+                                    className="aspect-square rounded-lg overflow-hidden cursor-zoom-in border-2 border-transparent hover:border-primary transition-all shadow-sm"
+                                    onClick={() => setSelectedImage(img)}
+                                >
                                     <img src={img} className="w-full h-full object-cover" alt={`Gallery ${idx}`} />
                                 </div>
                             ))}
@@ -650,6 +663,32 @@ const CampaignDetails = () => {
                             </button>
                         </div>
                     </div>
+                </div>
+            )}
+                </div>
+            )}
+
+            {/* Full Screen Image Viewer Modal */}
+            {selectedImage && (
+                <div 
+                    className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-sm p-4 cursor-zoom-out" 
+                    onClick={() => setSelectedImage(null)}
+                >
+                    <button 
+                        className="absolute top-6 right-6 text-white p-2 hover:bg-white/10 rounded-full transition-all duration-200 z-[110]"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            setSelectedImage(null);
+                        }}
+                    >
+                        <X className="h-8 w-8" />
+                    </button>
+                    <img 
+                        src={selectedImage} 
+                        className="max-w-full max-h-[90vh] rounded-lg shadow-2xl object-contain animate-in zoom-in duration-300" 
+                        alt="Zoomed"
+                        onClick={(e) => e.stopPropagation()}
+                    />
                 </div>
             )}
         </div>
