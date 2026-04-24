@@ -156,3 +156,29 @@ export const addManualDonation = async (campaignId: string, amount: number, dono
         throw error;
     }
 };
+export const syncCampaignTotals = async (campaignId: string) => {
+    try {
+        const donationsRef = collection(db, "campaigns", campaignId, "donations");
+        const snapshot = await getDocs(donationsRef);
+        
+        let totalAmount = 0;
+        let donorCount = 0;
+        
+        snapshot.forEach((doc) => {
+            const data = doc.data();
+            totalAmount += (data.amount || 0);
+            donorCount += 1;
+        });
+
+        const campaignRef = doc(db, "campaigns", campaignId);
+        await updateDoc(campaignRef, {
+            currentAmount: totalAmount,
+            donorCount: donorCount
+        });
+        
+        return { totalAmount, donorCount };
+    } catch (error) {
+        console.error("Error syncing campaign totals:", error);
+        throw error;
+    }
+};

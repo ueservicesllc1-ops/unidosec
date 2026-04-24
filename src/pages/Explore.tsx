@@ -33,13 +33,20 @@ const Explore = () => {
     useEffect(() => {
         const fetchCampaigns = async () => {
             try {
-                // Removed orderBy temporarily
                 const q = query(collection(db, "campaigns"));
                 const querySnapshot = await getDocs(q);
                 const fetchedCampaigns = querySnapshot.docs.map(doc => ({
                     id: doc.id,
                     ...doc.data()
                 })) as Campaign[];
+                
+                // Sort by createdAt desc
+                fetchedCampaigns.sort((a, b) => {
+                    const dateA = a.createdAt?.seconds || 0;
+                    const dateB = b.createdAt?.seconds || 0;
+                    return dateB - dateA;
+                });
+
                 setCampaigns(fetchedCampaigns);
             } catch (error) {
                 console.error("Error fetching campaigns:", error);

@@ -31,7 +31,8 @@ import {
     deleteUser,
     updateDonation,
     deleteDonation,
-    addManualDonation
+    addManualDonation,
+    syncCampaignTotals
 } from '../services/adminService';
 import { getAllWithdrawalRequests, type WithdrawalRequest } from '../services/withdrawalService';
 import { Link } from 'react-router-dom';
@@ -263,6 +264,16 @@ const CampaignsView = () => {
         fetchData();
     }, []);
 
+    const handleSync = async (id: string) => {
+        try {
+            await syncCampaignTotals(id);
+            alert("Totales sincronizados correctamente basados en la lista de donaciones.");
+            fetchData();
+        } catch (error) {
+            alert("Error al sincronizar");
+        }
+    };
+
     const handleStatus = async (id: string, status: any) => {
         if (!confirm(`¿Estás seguro de cambiar el estado a ${status}?`)) return;
         try {
@@ -283,6 +294,24 @@ const CampaignsView = () => {
         }
     };
 
+    const handleSyncAll = async () => {
+        if (!confirm("Esto recalculará los totales de TODAS las campañas basándose en las donaciones reales. ¿Continuar?")) return;
+        setLoading(true);
+        try {
+            let count = 0;
+            for (const camp of campaigns) {
+                await syncCampaignTotals(camp.id);
+                count++;
+            }
+            alert(`Éxito: Se han sincronizado ${count} campañas.`);
+            fetchData();
+        } catch (error) {
+            alert("Error en la sincronización masiva");
+        } finally {
+            setLoading(false);
+        }
+    };
+
     if (loading) return <div className="flex justify-center items-center py-20"><RefreshCw className="animate-spin text-primary" /></div>;
 
     return (
@@ -291,6 +320,13 @@ const CampaignsView = () => {
                 <div className="flex space-x-2">
                     <button className="bg-primary text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg shadow-primary/20 hover:-translate-y-0.5 transition-transform">
                         Todas ({campaigns.length})
+                    </button>
+                    <button 
+                        onClick={handleSyncAll}
+                        className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg shadow-red-200 hover:bg-red-700 transition-colors flex items-center space-x-2"
+                    >
+                        <RefreshCw className="w-4 h-4" />
+                        <span>REPARAR TODO</span>
                     </button>
                 </div>
                 <button onClick={fetchData} className="p-2 border border-gray-200 rounded-lg hover:bg-gray-50"><RefreshCw className="w-4 h-4 text-gray-500" /></button>
@@ -351,6 +387,13 @@ const CampaignsView = () => {
                                             <Plus className="w-4 h-4" />
                                         </button>
                                         <Link to={`/campaign/${camp.id}`} target="_blank" className="p-2 text-gray-400 hover:text-primary transition-colors hover:bg-primary/5 rounded-lg" title="Ver"><Eye className="w-4 h-4" /></Link>
+                                        <button
+                                            onClick={() => handleSync(camp.id)}
+                                            className="p-2 text-gray-400 hover:text-blue-500 transition-colors hover:bg-blue-50 rounded-lg"
+                                            title="Sincronizar Totales"
+                                        >
+                                            <RefreshCw className="w-4 h-4" />
+                                        </button>
                                         <button onClick={() => handleStatus(camp.id, 'approved')} className="p-2 text-gray-400 hover:text-green-500 transition-colors hover:bg-green-50 rounded-lg" title="Aprobar"><CheckCircle className="w-4 h-4" /></button>
                                         <button onClick={() => handleStatus(camp.id, 'hidden')} className="p-2 text-gray-400 hover:text-amber-500 transition-colors hover:bg-amber-50 rounded-lg" title="Ocultar"><XCircle className="w-4 h-4" /></button>
                                         <button onClick={() => handleDelete(camp.id)} className="p-2 text-gray-400 hover:text-red-500 transition-colors hover:bg-red-50 rounded-lg" title="Eliminar"><Trash2 className="w-4 h-4" /></button>
