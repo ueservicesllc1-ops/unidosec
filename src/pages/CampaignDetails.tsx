@@ -174,6 +174,29 @@ const CampaignDetails = () => {
         }
     };
 
+    const handleShare = async () => {
+        const shareData = {
+            title: campaign?.title || 'EcuFund',
+            text: campaign?.description?.slice(0, 160) || '¡Apoya esta causa!',
+            url: window.location.href,
+        };
+
+        if (navigator.share) {
+            try {
+                await navigator.share(shareData);
+            } catch (error) {
+                console.error('Error sharing:', error);
+            }
+        } else {
+            try {
+                await navigator.clipboard.writeText(window.location.href);
+                alert('¡Enlace copiado al portapapeles!');
+            } catch (err) {
+                console.error('Failed to copy: ', err);
+            }
+        }
+    };
+
     if (loading) return <div className="flex justify-center items-center h-screen"><div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div></div>;
     if (!campaign) return <div className="text-center py-20">Campaña no encontrada</div>;
 
@@ -308,10 +331,7 @@ const CampaignDetails = () => {
                                 <span className="text-[10px] font-bold hidden sm:inline">Instagram</span>
                             </button>
                             <button
-                                onClick={() => {
-                                    navigator.clipboard.writeText(window.location.href);
-                                    alert('¡Enlace copiado al portapapeles!');
-                                }}
+                                onClick={handleShare}
                                 className="flex items-center space-x-2 bg-gray-200 text-gray-700 px-3 py-2 rounded-lg hover:bg-gray-300 transition"
                             >
                                 <LinkIcon className="h-4 w-4" />
@@ -405,7 +425,10 @@ const CampaignDetails = () => {
                                     )}
                                 </button>
 
-                                <button className="w-full bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 font-bold py-3 px-4 rounded-xl transition flex items-center justify-center shadow-sm">
+                                <button 
+                                    onClick={handleShare}
+                                    className="w-full bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 font-bold py-3 px-4 rounded-xl transition flex items-center justify-center shadow-sm"
+                                >
                                     <Share2 className="h-5 w-5 mr-2" /> Compartir Campaña
                                 </button>
 
