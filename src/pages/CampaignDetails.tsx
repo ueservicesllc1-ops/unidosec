@@ -220,9 +220,12 @@ const CampaignDetails = () => {
                 <meta property="og:title" content={`${campaign.title} | EcuFund`} />
                 <meta property="og:description" content={ogDescription} />
                 <meta property="og:image" content={ogImage} />
+                <meta property="og:image:secure_url" content={ogImage} />
                 <meta property="og:image:width" content="1200" />
                 <meta property="og:image:height" content="630" />
+                <meta property="og:image:alt" content={campaign.title} />
                 <meta property="og:site_name" content="EcuFund" />
+                <meta property="fb:app_id" content="123456789012345" />
                 <meta property="og:locale" content="es_EC" />
 
                 {/* Twitter Card */}
@@ -231,6 +234,11 @@ const CampaignDetails = () => {
                 <meta name="twitter:title" content={`${campaign.title} | EcuFund`} />
                 <meta name="twitter:description" content={ogDescription} />
                 <meta name="twitter:image" content={ogImage} />
+                
+                {/* Schema.org / Google+ */}
+                <meta itemprop="name" content={`${campaign.title} | EcuFund`} />
+                <meta itemprop="description" content={ogDescription} />
+                <meta itemprop="image" content={ogImage} />
             </Helmet>
 
             {/* FLATTENED GRID: Allows interleaving content for Mobile/Desktop */}

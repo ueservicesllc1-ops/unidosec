@@ -10,12 +10,13 @@
     "dev": "vite",
     "prebuild": "node -e \"const fs=require('fs'); if(fs.existsSync('dist')){fs.rmSync('dist', {recursive:true})}\"",
     "build": "vite build",
-    "start": "serve -s dist -l $PORT"
+    "start": "node server.js"
   },
   "dependencies": {
     "@paypal/react-paypal-js": "^8.9.2",
     "@tailwindcss/postcss": "^4.1.18",
     "clsx": "^2.1.1",
+    "express": "^5.2.1",
     "firebase": "^12.9.0",
     "framer-motion": "^12.34.0",
     "lucide-react": "^0.575.0",
