@@ -53,10 +53,11 @@ app.get('/campaign/:id', async (req, res, next) => {
       let html = fs.readFileSync(indexPath, 'utf8');
       
       // Reemplazar las etiquetas estáticas por las dinámicas de la campaña
-      html = html.replace(/<title>.*<\/title>/, `<title>${title} | EcuFund</title>`);
-      html = html.replace(/<meta property="og:title" content="[^"]*" \/>/, `<meta property="og:title" content="${title} | EcuFund" />`);
-      html = html.replace(/<meta property="og:description" content="[^"]*"[\s]*\/>/, `<meta property="og:description" content="${description}" />`);
-      html = html.replace(/<meta property="og:image" content="[^"]*"[\s]*\/>/, `<meta property="og:image" content="${imageUrl}" />`);
+      html = html.replace(/<title>[^<]*<\/title>/i, `<title>${title} | EcuFund</title>`);
+      html = html.replace(/<meta[^>]*property="og:url"[^>]*>/i, `<meta property="og:url" content="https://unidosecuador.org/campaign/${campaignId}" />`);
+      html = html.replace(/<meta[^>]*property="og:title"[^>]*>/i, `<meta property="og:title" content="${title} | EcuFund" />`);
+      html = html.replace(/<meta[^>]*property="og:description"[^>]*>/i, `<meta property="og:description" content="${description}" />`);
+      html = html.replace(/<meta[^>]*property="og:image"[^>]*>/i, `<meta property="og:image" content="${imageUrl}" />`);
       
       // Añadir secure_url si es necesario
       html = html.replace('</head>', `<meta property="og:image:secure_url" content="${imageUrl}" />\n</head>`);
