@@ -77,7 +77,7 @@ app.get('/campaign/:id', async (req, res, next) => {
 app.use(express.static(path.resolve(__dirname, 'dist')));
 
 // Redirigir cualquier otra ruta no encontrada a 'index.html' para que React Router se encargue
-app.get('*', (req, res) => {
+app.use((req, res) => {
   res.sendFile(indexPath);
 });
 
