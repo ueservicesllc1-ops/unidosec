@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Heart, Users, ShieldCheck, User } from 'lucide-react';
+import { Heart, Users, ShieldCheck, User, ChevronDown } from 'lucide-react';
 import { collection, query, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
 import type { CampaignData } from '../services/campaignService';
@@ -16,6 +16,7 @@ interface Campaign extends CampaignData {
 
 const Home = () => {
     const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+    const [visibleCount, setVisibleCount] = useState(8);
     const [loading, setLoading] = useState(true);
     const [currentSlide, setCurrentSlide] = useState(0);
 
@@ -50,8 +51,7 @@ const Home = () => {
                         const dateA = a.createdAt?.seconds || 0;
                         const dateB = b.createdAt?.seconds || 0;
                         return dateB - dateA;
-                    })
-                    .slice(0, 8);
+                    });
 
                 setCampaigns(sortedAndFiltered);
             } catch (error) {
@@ -165,61 +165,85 @@ const Home = () => {
                             <Link to="/start-campaign" className="text-primary font-bold text-sm mt-2 inline-block hover:underline">¡Sé el primero en iniciar una!</Link>
                         </div>
                     ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 sm:gap-6">
-                            {campaigns.map((camp) => (
-                                <Link to={`/campaign/${camp.id}`} key={camp.id} className="bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-md hover:-translate-y-0.5 transition duration-200 border border-gray-100 flex flex-col h-full group">
-                                    <div className="relative aspect-[16/10] bg-gray-100 overflow-hidden">
-                                        {camp.imageUrl ? (
-                                            <img src={camp.imageUrl} alt={camp.title} className="w-full h-full object-cover group-hover:scale-105 transition duration-500" />
-                                        ) : (
-                                            <div className="flex items-center justify-center h-full text-gray-400">
-                                                <Heart className="h-10 w-10 opacity-40" />
-                                            </div>
-                                        )}
-                                        <span className="absolute top-2.5 left-2.5 bg-white/95 backdrop-blur px-2.5 py-0.5 rounded-full text-[10px] font-black text-gray-800 uppercase tracking-wide shadow-sm">
-                                            {camp.category}
-                                        </span>
-                                    </div>
-                                    <div className="p-4 flex-grow flex flex-col justify-between">
-                                        <div>
-                                            <h3 className="font-bold text-sm sm:text-[15px] text-gray-900 mb-1 line-clamp-2 leading-snug group-hover:text-primary transition min-h-[2.5rem]">{camp.title}</h3>
-                                            <p className="text-gray-500 text-xs mb-3 line-clamp-2 leading-relaxed">
-                                                {camp.description}
-                                            </p>
+                        <>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5 sm:gap-6">
+                                {campaigns.slice(0, visibleCount).map((camp) => (
+                                    <Link to={`/campaign/${camp.id}`} key={camp.id} className="bg-white rounded-2xl overflow-hidden shadow-sm hover:shadow-md hover:-translate-y-0.5 transition duration-200 border border-gray-100 flex flex-col h-full group">
+                                        <div className="relative aspect-[16/10] bg-gray-100 overflow-hidden">
+                                            {camp.imageUrl ? (
+                                                <img src={camp.imageUrl} alt={camp.title} className="w-full h-full object-cover group-hover:scale-105 transition duration-500" />
+                                            ) : (
+                                                <div className="flex items-center justify-center h-full text-gray-400">
+                                                    <Heart className="h-10 w-10 opacity-40" />
+                                                </div>
+                                            )}
+                                            <span className="absolute top-2.5 left-2.5 bg-white/95 backdrop-blur px-2.5 py-0.5 rounded-full text-[10px] font-black text-gray-800 uppercase tracking-wide shadow-sm">
+                                                {camp.category}
+                                            </span>
                                         </div>
-
-                                        <div>
-                                            <div className="pt-2">
-                                                <div className="flex justify-between items-baseline text-xs mb-1">
-                                                    <span className="font-extrabold text-gray-950 text-sm sm:text-base">${camp.currentAmount.toLocaleString()}</span>
-                                                    <span className="text-gray-400 text-xs">de ${camp.goal.toLocaleString()}</span>
-                                                </div>
-                                                <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
-                                                    <div className="bg-primary h-1.5 rounded-full transition-all duration-500" style={{ width: `${Math.min((camp.currentAmount / camp.goal) * 100, 100)}%` }}></div>
-                                                </div>
-                                                <div className="flex justify-between text-[11px] text-gray-400 mt-1">
-                                                    <span>{camp.donorCount || 0} donantes</span>
-                                                    <span>{Math.round(Math.min((camp.currentAmount / camp.goal) * 100, 100))}%</span>
-                                                </div>
+                                        <div className="p-4 flex-grow flex flex-col justify-between">
+                                            <div>
+                                                <h3 className="font-bold text-sm sm:text-[15px] text-gray-900 mb-1 line-clamp-2 leading-snug group-hover:text-primary transition min-h-[2.5rem]">{camp.title}</h3>
+                                                <p className="text-gray-500 text-xs mb-3 line-clamp-2 leading-relaxed">
+                                                    {camp.description}
+                                                </p>
                                             </div>
 
-                                            <div className="flex items-center space-x-2 pt-2.5 mt-2.5 border-t border-gray-50 text-xs text-gray-500">
-                                                <div className="h-6 w-6 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 flex-shrink-0">
-                                                    <User className="h-3.5 w-3.5" />
-                                                </div>
-                                                <span className="text-xs text-gray-600 truncate flex-1">por {camp.organizer?.name || 'Anónimo'}</span>
-                                                {camp.likesCount !== undefined && camp.likesCount > 0 && (
-                                                    <div className="flex items-center text-pink-500 bg-pink-50 px-2 py-0.5 rounded-full text-[10px] font-bold">
-                                                        <Heart className="h-3 w-3 mr-1" fill="currentColor" />
-                                                        {camp.likesCount}
+                                            <div>
+                                                <div className="pt-2">
+                                                    <div className="flex justify-between items-baseline text-xs mb-1">
+                                                        <span className="font-extrabold text-gray-950 text-sm sm:text-base">${camp.currentAmount.toLocaleString()}</span>
+                                                        <span className="text-gray-400 text-xs">de ${camp.goal.toLocaleString()}</span>
                                                     </div>
-                                                )}
+                                                    <div className="w-full bg-gray-100 rounded-full h-1.5 overflow-hidden">
+                                                        <div className="bg-primary h-1.5 rounded-full transition-all duration-500" style={{ width: `${Math.min((camp.currentAmount / camp.goal) * 100, 100)}%` }}></div>
+                                                    </div>
+                                                    <div className="flex justify-between text-[11px] text-gray-400 mt-1">
+                                                        <span>{camp.donorCount || 0} donantes</span>
+                                                        <span>{Math.round(Math.min((camp.currentAmount / camp.goal) * 100, 100))}%</span>
+                                                    </div>
+                                                </div>
+
+                                                <div className="flex items-center space-x-2 pt-2.5 mt-2.5 border-t border-gray-50 text-xs text-gray-500">
+                                                    <div className="h-6 w-6 rounded-full bg-gray-100 flex items-center justify-center text-gray-400 flex-shrink-0">
+                                                        <User className="h-3.5 w-3.5" />
+                                                    </div>
+                                                    <span className="text-xs text-gray-600 truncate flex-1">por {camp.organizer?.name || 'Anónimo'}</span>
+                                                    {camp.likesCount !== undefined && camp.likesCount > 0 && (
+                                                        <div className="flex items-center text-pink-500 bg-pink-50 px-2 py-0.5 rounded-full text-[10px] font-bold">
+                                                            <Heart className="h-3 w-3 mr-1" fill="currentColor" />
+                                                            {camp.likesCount}
+                                                        </div>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
-                                    </div>
-                                </Link>
-                            ))}
-                        </div>
+                                    </Link>
+                                ))}
+                            </div>
+
+                            {/* Botón Ver Más */}
+                            {visibleCount < campaigns.length && (
+                                <div className="text-center pt-8 sm:pt-10">
+                                    <button
+                                        onClick={() => setVisibleCount((prev) => prev + 8)}
+                                        className="inline-flex items-center gap-2 px-8 py-3.5 bg-white border-2 border-primary text-primary hover:bg-primary hover:text-white rounded-full font-bold text-sm sm:text-base shadow-sm hover:shadow-lg hover:shadow-primary/20 transition-all duration-300 transform hover:-translate-y-0.5 active:translate-y-0 cursor-pointer"
+                                    >
+                                        <span>Ver más</span>
+                                        <ChevronDown className="w-4 h-4 animate-bounce" />
+                                    </button>
+                                </div>
+                            )}
+
+                            {campaigns.length > 8 && visibleCount >= campaigns.length && (
+                                <div className="text-center pt-8 sm:pt-10 text-xs sm:text-sm text-gray-400 font-medium">
+                                    Has visto todas las campañas disponibles.{" "}
+                                    <Link to="/explore" className="text-primary font-bold hover:underline ml-1">
+                                        Explorar todas las categorías &rarr;
+                                    </Link>
+                                </div>
+                            )}
+                        </>
                     )}
                 </section>
             </div>
