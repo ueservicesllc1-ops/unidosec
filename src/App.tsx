@@ -14,6 +14,7 @@ import Terms from './pages/Terms';
 import FAQ from './pages/FAQ';
 import TrustSafety from './pages/TrustSafety';
 import AdminDashboard from './pages/AdminDashboard';
+import UserProfile from './pages/UserProfile';
 import { AdminRoute } from './components/AdminRoute';
 import VisitCounter from './components/VisitCounter';
 
@@ -47,6 +48,14 @@ function App() {
                 element={
                   <ProtectedRoute>
                     <StartCampaign />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/profile"
+                element={
+                  <ProtectedRoute>
+                    <UserProfile />
                   </ProtectedRoute>
                 }
               />

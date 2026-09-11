@@ -1,4 +1,5 @@
 import { db, storage } from '../firebase';
+import { isMedicalCampaign } from './medicalVerificationService';
 import { collection, addDoc, serverTimestamp, DocumentReference, doc, updateDoc, increment, getDoc, query, orderBy, limit, getDocs, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
@@ -44,12 +45,16 @@ export const uploadImage = async (file: File): Promise<string> => {
 
 export const createCampaign = async (data: CampaignData): Promise<string> => {
     try {
+        const medicalRequired = isMedicalCampaign(data.category);
         const docRef: DocumentReference = await addDoc(collection(db, "campaigns"), {
             ...data,
             createdAt: serverTimestamp(),
             currentAmount: 0,
             donorCount: 0,
-            status: 'active'
+            status: 'active',
+            // Verificación médica — obligatoria para categorías de salud
+            medicalDocumentRequired: medicalRequired,
+            medicalDocumentStatus: medicalRequired ? 'pending_upload' : 'not_required',
         });
         return docRef.id;
     } catch (error) {

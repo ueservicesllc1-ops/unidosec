@@ -8,6 +8,7 @@ import { QRCodeCanvas } from 'qrcode.react';
 import { getRecentDonations, toggleCampaignLike, type CampaignData, type Donation } from '../services/campaignService';
 import { useAuth } from '../context/AuthContext';
 import { createWithdrawalRequest } from '../services/withdrawalService';
+import { uploadMedicalDocument, canWithdraw } from '../services/medicalVerificationService';
 import PayPalDonationButton from '../components/PayPalDonationButton';
 
 // Helper to extract YouTube ID
@@ -31,6 +32,11 @@ interface Campaign extends CampaignData {
     additionalImages?: string[];
     likesCount?: number;
     likedBy?: string[];
+    // Verificación médica
+    medicalDocumentRequired?: boolean;
+    medicalDocumentStatus?: string;
+    medicalDocumentUrl?: string;
+    medicalAdminNote?: string;
 }
 
 const CampaignDetails = () => {
@@ -60,6 +66,11 @@ const CampaignDetails = () => {
 
     const [showQRModal, setShowQRModal] = useState(false);
     const [selectedImage, setSelectedImage] = useState<string | null>(null);
+
+    // Estado de upload del documento médico
+    const [medDocFile, setMedDocFile] = useState<File | null>(null);
+    const [isUploadingMedDoc, setIsUploadingMedDoc] = useState(false);
+    const [medDocUploadSuccess, setMedDocUploadSuccess] = useState(false);
 
     const fetchData = async () => {
         if (!id) return;
@@ -109,15 +120,45 @@ const CampaignDetails = () => {
             });
             alert("Solicitud de retiro enviada correctamente. Nuestro equipo la revisará pronto.");
             setShowWithdrawalModal(false);
-        } catch (error) {
+        } catch (error: any) {
+            if (error?.code === 'WITHDRAWAL_BLOCKED') {
+                const reasons: string[] = error.reasons ?? [];
+                const msgs = reasons.map((r: string) => {
+                    if (r === 'NO_FUNDS') return '• No hay fondos recaudados.';
+                    if (r.startsWith('MEDICAL_DOC_NOT_APPROVED')) return '• La documentación médica no ha sido aprobada por el administrador.';
+                    return `• ${r}`;
+                });
+                alert(`🔒 Retiro bloqueado\n\n${msgs.join('\n')}`);
+            } else {
+                alert('Error al enviar la solicitud. Por favor intenta nuevamente.');
+            }
             console.error(error);
-            alert("Error al enviar la solicitud.");
         } finally {
             setIsSubmittingWithdrawal(false);
         }
     };
 
+    // Subir documento médico
+    const handleMedDocUpload = async () => {
+        if (!medDocFile || !campaign || !user) return;
+        setIsUploadingMedDoc(true);
+        try {
+            await uploadMedicalDocument(campaign.id, medDocFile, user.uid);
+            setMedDocUploadSuccess(true);
+            setMedDocFile(null);
+            // Recargar datos de la campaña para reflejar el nuevo estado
+            await fetchData();
+        } catch (err) {
+            console.error(err);
+            alert('Error al subir el documento. Por favor intenta nuevamente.');
+        } finally {
+            setIsUploadingMedDoc(false);
+        }
+    };
+
     const isOrganizer = user && campaign && (user.email === campaign.organizer.email);
+    // El usuario está logueado pero NO es el organizador (email diferente)
+    const isLoggedInButNotOrganizer = user && campaign && user.email !== campaign.organizer.email;
 
     // Get or create a persistent guest ID for anonymous likes
     const getGuestId = () => {
@@ -236,9 +277,9 @@ const CampaignDetails = () => {
                 <meta name="twitter:image" content={ogImage} />
                 
                 {/* Schema.org / Google+ */}
-                <meta itemprop="name" content={`${campaign.title} | EcuFund`} />
-                <meta itemprop="description" content={ogDescription} />
-                <meta itemprop="image" content={ogImage} />
+                <meta itemProp="name" content={`${campaign.title} | EcuFund`} />
+                <meta itemProp="description" content={ogDescription} />
+                <meta itemProp="image" content={ogImage} />
             </Helmet>
 
             {/* FLATTENED GRID: Allows interleaving content for Mobile/Desktop */}
@@ -261,7 +302,7 @@ const CampaignDetails = () => {
                                 src={campaign.imageUrl} 
                                 alt={campaign.title} 
                                 className="w-full h-full object-cover cursor-zoom-in transition-transform duration-500 hover:scale-105" 
-                                onClick={() => setSelectedImage(campaign.imageUrl)}
+                                onClick={() => setSelectedImage(campaign.imageUrl || null)}
                             />
                         ) : (
                             <div className="flex items-center justify-center h-full text-gray-400">
@@ -277,7 +318,7 @@ const CampaignDetails = () => {
                             {campaign.videoUrl && campaign.imageUrl && (
                                 <div 
                                     className="aspect-square rounded-lg overflow-hidden cursor-zoom-in border-2 border-transparent hover:border-primary transition-all shadow-sm"
-                                    onClick={() => setSelectedImage(campaign.imageUrl)}
+                                    onClick={() => setSelectedImage(campaign.imageUrl || null)}
                                 >
                                     <img src={campaign.imageUrl} className="w-full h-full object-cover" alt="Main" />
                                 </div>
@@ -440,14 +481,192 @@ const CampaignDetails = () => {
                                     <Share2 className="h-5 w-5 mr-2" /> Compartir Campaña
                                 </button>
 
-                                {isOrganizer && (
-                                    <button
-                                        onClick={() => setShowWithdrawalModal(true)}
-                                        className="w-full bg-slate-900 text-white font-bold py-3 px-4 rounded-xl transition flex items-center justify-center shadow-lg hover:bg-slate-800"
-                                    >
-                                        <Landmark className="h-5 w-5 mr-2 text-primary" /> Solicitar Retiro de Fondos
-                                    </button>
-                                )}
+                                {/* ─────────────────────────────────────────────── */}
+                                {/* ZONA DE RETIRO — multi-estado */}
+                                {/* ─────────────────────────────────────────────── */}
+                                {isOrganizer ? (() => {
+                                    const auth = canWithdraw(campaign);
+                                    const medStatus = campaign.medicalDocumentStatus ?? 'pending_upload';
+                                    const medRequired = campaign.medicalDocumentRequired === true;
+
+                                    // ─ A: DOC MÉDICO REQUERIDO Y NO SUBIDO ─
+                                    if (medRequired && (medStatus === 'pending_upload' || medStatus === 'uploaded')) {
+                                        return (
+                                            <div className="w-full bg-blue-50 border border-blue-200 rounded-2xl p-4 space-y-3">
+                                                <div className="flex items-center space-x-2">
+                                                    <span className="text-2xl">⚕️</span>
+                                                    <div>
+                                                        <p className="font-bold text-blue-900 text-sm">Certificación Médica Requerida</p>
+                                                        <p className="text-xs text-blue-700">Para retirar fondos de esta campaña debes subir un informe médico oficial.</p>
+                                                    </div>
+                                                </div>
+                                                <label className="block">
+                                                    <span className="text-xs font-bold text-blue-800">Seleccionar documento (PDF, JPG, PNG)</span>
+                                                    <input
+                                                        type="file"
+                                                        accept=".pdf,.jpg,.jpeg,.png"
+                                                        className="mt-1 block w-full text-xs text-blue-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-blue-100 file:text-blue-700 hover:file:bg-blue-200 cursor-pointer"
+                                                        onChange={e => setMedDocFile(e.target.files?.[0] ?? null)}
+                                                    />
+                                                </label>
+                                                {medDocFile && (
+                                                    <button
+                                                        onClick={handleMedDocUpload}
+                                                        disabled={isUploadingMedDoc}
+                                                        className="w-full bg-blue-600 text-white text-sm font-bold py-2.5 rounded-xl hover:bg-blue-700 transition disabled:opacity-50 flex items-center justify-center"
+                                                    >
+                                                        {isUploadingMedDoc ? (
+                                                            <><span className="animate-spin mr-2">⏳</span> Subiendo...</>
+                                                        ) : (
+                                                            <>☁️ Subir Documento Médico</>
+                                                        )}
+                                                    </button>
+                                                )}
+                                                {medDocUploadSuccess && (
+                                                    <p className="text-xs text-green-700 font-bold text-center">✅ Documento enviado — en revisión por el equipo</p>
+                                                )}
+                                            </div>
+                                        );
+                                    }
+
+                                    // ─ B: DOC EN REVISIÓN ─
+                                    if (medRequired && medStatus === 'under_review') {
+                                        return (
+                                            <div className="w-full bg-amber-50 border border-amber-200 rounded-2xl p-4">
+                                                <div className="flex items-start space-x-3">
+                                                    <span className="text-xl mt-0.5">⏳</span>
+                                                    <div>
+                                                        <p className="font-bold text-amber-900 text-sm">🔒 Retiro bloqueado temporalmente</p>
+                                                        <p className="text-xs text-amber-800 mt-1">Tu documentación médica está siendo revisada por nuestro equipo administrativo.</p>
+                                                        <p className="text-xs text-amber-700 mt-1">Documentación médica: <strong>⏳ En revisión</strong></p>
+                                                        <p className="text-xs text-amber-600 mt-2 italic">Esta medida protege a los donantes y previene campañas fraudulentas.</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    }
+
+                                    // ─ C: DOC RECHAZADO ─
+                                    if (medRequired && medStatus === 'rejected') {
+                                        return (
+                                            <div className="w-full bg-red-50 border border-red-200 rounded-2xl p-4 space-y-3">
+                                                <div className="flex items-start space-x-3">
+                                                    <span className="text-xl mt-0.5">❌</span>
+                                                    <div className="flex-1">
+                                                        <p className="font-bold text-red-900 text-sm">Documentación Rechazada</p>
+                                                        {campaign.medicalAdminNote && (
+                                                            <div className="mt-2 bg-red-100 border border-red-200 rounded-lg p-2">
+                                                                <p className="text-xs font-bold text-red-800">Motivo:</p>
+                                                                <p className="text-xs text-red-700 mt-1">{campaign.medicalAdminNote}</p>
+                                                            </div>
+                                                        )}
+                                                        <p className="text-xs text-red-700 mt-2">Por favor sube un nuevo documento que cumpla con los requisitos.</p>
+                                                    </div>
+                                                </div>
+                                                <label className="block">
+                                                    <span className="text-xs font-bold text-red-800">Subir nuevo documento</span>
+                                                    <input
+                                                        type="file"
+                                                        accept=".pdf,.jpg,.jpeg,.png"
+                                                        className="mt-1 block w-full text-xs file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-red-100 file:text-red-700 hover:file:bg-red-200 cursor-pointer"
+                                                        onChange={e => setMedDocFile(e.target.files?.[0] ?? null)}
+                                                    />
+                                                </label>
+                                                {medDocFile && (
+                                                    <button
+                                                        onClick={handleMedDocUpload}
+                                                        disabled={isUploadingMedDoc}
+                                                        className="w-full bg-red-600 text-white text-sm font-bold py-2.5 rounded-xl hover:bg-red-700 transition disabled:opacity-50 flex items-center justify-center"
+                                                    >
+                                                        {isUploadingMedDoc ? <><span className="animate-spin mr-2">⏳</span> Subiendo...</> : '☁️ Enviar Nuevo Documento'}
+                                                    </button>
+                                                )}
+                                            </div>
+                                        );
+                                    }
+
+                                    // ─ D: SE PIDIÓ MÁS INFORMACIÓN ─
+                                    if (medRequired && medStatus === 'more_info_required') {
+                                        return (
+                                            <div className="w-full bg-purple-50 border border-purple-200 rounded-2xl p-4 space-y-3">
+                                                <div className="flex items-start space-x-3">
+                                                    <span className="text-xl mt-0.5">📄</span>
+                                                    <div className="flex-1">
+                                                        <p className="font-bold text-purple-900 text-sm">Se requiere documentación adicional</p>
+                                                        {campaign.medicalAdminNote && (
+                                                            <div className="mt-2 bg-purple-100 border border-purple-200 rounded-lg p-2">
+                                                                <p className="text-xs font-bold text-purple-800">El equipo solicita:</p>
+                                                                <p className="text-xs text-purple-700 mt-1">{campaign.medicalAdminNote}</p>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                <label className="block">
+                                                    <span className="text-xs font-bold text-purple-800">Subir documentación adicional</span>
+                                                    <input
+                                                        type="file"
+                                                        accept=".pdf,.jpg,.jpeg,.png"
+                                                        className="mt-1 block w-full text-xs file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-bold file:bg-purple-100 file:text-purple-700 hover:file:bg-purple-200 cursor-pointer"
+                                                        onChange={e => setMedDocFile(e.target.files?.[0] ?? null)}
+                                                    />
+                                                </label>
+                                                {medDocFile && (
+                                                    <button
+                                                        onClick={handleMedDocUpload}
+                                                        disabled={isUploadingMedDoc}
+                                                        className="w-full bg-purple-600 text-white text-sm font-bold py-2.5 rounded-xl hover:bg-purple-700 transition disabled:opacity-50 flex items-center justify-center"
+                                                    >
+                                                        {isUploadingMedDoc ? <><span className="animate-spin mr-2">⏳</span> Subiendo...</> : '☁️ Enviar Documentación'}
+                                                    </button>
+                                                )}
+                                            </div>
+                                        );
+                                    }
+
+                                    // ─ E: DOC APROBADO / NO REQUERIDO — mostrar botón de retiro ─
+                                    return (
+                                        <>
+                                            {medRequired && medStatus === 'approved' && (
+                                                <div className="w-full bg-green-50 border border-green-200 rounded-xl p-3 flex items-center space-x-2">
+                                                    <span className="text-green-600">✅</span>
+                                                    <p className="text-xs text-green-800 font-medium">Documentación médica verificada. El retiro estará disponible completando las demás verificaciones.</p>
+                                                </div>
+                                            )}
+                                            <button
+                                                onClick={() => {
+                                                    if (!auth.allowed) {
+                                                        const msgs = auth.blockedBy.map(r =>
+                                                            r === 'NO_FUNDS' ? '• No hay fondos recaudados aún.' : `• ${r}`
+                                                        ).join('\n');
+                                                        alert(`🔒 Retiro no disponible\n\n${msgs}`);
+                                                        return;
+                                                    }
+                                                    setShowWithdrawalModal(true);
+                                                }}
+                                                disabled={!auth.allowed}
+                                                className={`w-full font-bold py-3 px-4 rounded-xl transition flex items-center justify-center shadow-lg ${
+                                                    auth.allowed
+                                                        ? 'bg-slate-900 text-white hover:bg-slate-800'
+                                                        : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                                                }`}
+                                            >
+                                                <Landmark className="h-5 w-5 mr-2" />
+                                                {auth.allowed ? 'Solicitar Retiro de Fondos' : 'Sin fondos disponibles aún'}
+                                            </button>
+                                        </>
+                                    );
+                                })()
+                                : !user ? (
+                                    <div className="w-full bg-amber-50 border border-amber-200 text-amber-800 text-sm font-medium py-3 px-4 rounded-xl flex items-center">
+                                        <Landmark className="h-4 w-4 mr-2 flex-shrink-0 text-amber-600" />
+                                        <span>¿Eres el organizador? <button onClick={() => {}} className="underline font-bold">Inicia sesión</button> para solicitar el retiro.</span>
+                                    </div>
+                                ) : isLoggedInButNotOrganizer ? (
+                                    <div className="w-full bg-red-50 border border-red-200 text-red-700 text-xs font-medium py-3 px-4 rounded-xl flex items-start">
+                                        <Landmark className="h-4 w-4 mr-2 flex-shrink-0 mt-0.5 text-red-400" />
+                                        <span>Solo el organizador de esta campaña puede solicitar el retiro. Ingresa con el email correcto.</span>
+                                    </div>
+                                ) : null}
                             </div>
 
                             {/* Mini Recent Donations */}

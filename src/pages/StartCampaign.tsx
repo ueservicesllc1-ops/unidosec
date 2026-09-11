@@ -229,6 +229,16 @@ const StartCampaign = () => {
                                         <option value="Memorial">Memorial</option>
                                         <option value="Comunidad">Comunidad</option>
                                     </select>
+                                    {/* Aviso obligatorio para categorías médicas */}
+                                    {(formData.category === 'Salud' || formData.category === 'Emergencia') && (
+                                        <div className="mt-2 flex items-start space-x-2 bg-blue-50 border border-blue-200 rounded-xl px-3 py-2">
+                                            <span className="text-base mt-0.5">⚕️</span>
+                                            <p className="text-xs text-blue-800 leading-relaxed">
+                                                <strong>Documentación médica requerida.</strong> Para poder retirar los fondos recaudados en campañas de salud o emergencia médica, el administrador debe verificar y aprobar una <strong>certificación médica oficial</strong> emitida por un médico, hospital o clínica. Podrás subirla una vez creada tu campaña.
+                                            </p>
+                                        </div>
+                                    )}
+
                                 </div>
                                 <div>
                                     <label className="block text-sm font-semibold text-gray-700 mb-2">Meta ($)</label>

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Heart, Users, ShieldCheck, User } from 'lucide-react';
-import { collection, query, limit, getDocs } from 'firebase/firestore';
+import { collection, query, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
 import type { CampaignData } from '../services/campaignService';
 
@@ -11,6 +11,7 @@ interface Campaign extends CampaignData {
     donorCount: number;
     createdAt: any;
     likesCount?: number;
+    status?: string;
 }
 
 const Home = () => {
