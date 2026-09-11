@@ -11,6 +11,7 @@ import CampaignDetails from './pages/CampaignDetails';
 import Explore from './pages/Explore';
 import HowItWorks from './pages/HowItWorks';
 import Terms from './pages/Terms';
+import WithdrawalTerms from './pages/WithdrawalTerms';
 import FAQ from './pages/FAQ';
 import TrustSafety from './pages/TrustSafety';
 import AdminDashboard from './pages/AdminDashboard';
@@ -32,6 +33,8 @@ function App() {
               <Route path="/explore" element={<Explore />} />
               <Route path="/how-it-works" element={<HowItWorks />} />
               <Route path="/terms" element={<Terms />} />
+              <Route path="/terminos-retiros" element={<WithdrawalTerms />} />
+              <Route path="/terms/withdrawals" element={<WithdrawalTerms />} />
               <Route path="/faq" element={<FAQ />} />
               <Route path="/trust" element={<TrustSafety />} />
               <Route path="/campaign/:id" element={<CampaignDetails />} />

@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { Link } from 'react-router-dom';
 
 const Terms = () => {
     useEffect(() => {
@@ -81,10 +82,10 @@ const Terms = () => {
             <section className="space-y-4 mt-8">
                 <h2 className="text-2xl font-bold text-gray-800">6. Retención de Fondos y Pagos</h2>
                 <p>
-                    Los fondos recaudados (menos la tarifa del 30%) se transferirán al Organizador o Beneficiario designado según el método de pago seleccionado. Unidos EC puede retener fondos si existe sospecha de fraude, disputas de contracargos o violación de estos Términos.
+                    Los fondos recaudados (menos la tarifa del 30%) se transferirán al Organizador o Beneficiario designado según el método de pago seleccionado, condicionado a la plena conformidad de los <Link to="/terminos-retiros" className="text-gray-700 hover:text-primary underline decoration-gray-300 hover:decoration-primary transition-colors font-medium" title="Consultar normativa de retiro">términos de verificación y retiros</Link>. Unidos EC puede retener fondos si existe sospecha de fraude, disputas de contracargos o violación de estos Términos.
                 </p>
                 <p>
-                    Es responsabilidad exclusiva del Organizador proporcionar información bancaria correcta. Unidos EC no se hace responsable de fondos transferidos a cuentas incorrectas debido a errores en la información proporcionada por el Organizador.
+                    Es responsabilidad exclusiva del Organizador proporcionar información bancaria correcta y acreditada mediante certificación oficial. La habilitación de cualquier desembolso solo procederá tras la verificación integral de identidad, cuenta bancaria y documentación justificativa de la causa. Unidos EC no se hace responsable de fondos transferidos a cuentas incorrectas debido a errores en la información proporcionada por el Organizador.
                 </p>
             </section>
 
