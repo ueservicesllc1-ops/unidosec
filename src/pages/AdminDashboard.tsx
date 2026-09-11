@@ -295,6 +295,7 @@ const CampaignsView = () => {
     const [campaigns, setCampaigns] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
 
+    const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'active' | 'hidden'>('all');
     const [showDonationModal, setShowDonationModal] = useState(false);
     const [selectedCampaign, setSelectedCampaign] = useState<any>(null);
 
@@ -324,10 +325,17 @@ const CampaignsView = () => {
         }
     };
 
-    const handleStatus = async (id: string, status: any) => {
-        if (!confirm(`¿Estás seguro de cambiar el estado a ${status}?`)) return;
+    const handleStatus = async (camp: any, status: any) => {
+        const actionName = status === 'approved' ? 'APROBAR y hacer visible' : status === 'hidden' ? 'OCULTAR' : status;
+        if (!confirm(`¿Estás seguro de ${actionName} la campaña "${camp.title}"?`)) return;
         try {
-            await updateCampaignStatus(id, status);
+            await updateCampaignStatus(camp.id, status);
+            if (status === 'approved') {
+                const recipientId = camp.organizerId || camp.organizer?.email;
+                if (recipientId) {
+                    await sendSystemNotification.campaignApproved(recipientId, camp.id, camp.title).catch(console.error);
+                }
+            }
             fetchData();
         } catch (error) {
             alert("Error al actualizar");
@@ -364,19 +372,74 @@ const CampaignsView = () => {
 
     if (loading) return <div className="flex justify-center items-center py-20"><RefreshCw className="animate-spin text-primary" /></div>;
 
+    const pendingCount = campaigns.filter(c => c.status === 'pending').length;
+    const activeCount = campaigns.filter(c => c.status === 'active' || c.status === 'approved').length;
+    const hiddenCount = campaigns.filter(c => c.status === 'hidden').length;
+
+    const filteredCampaigns = campaigns.filter(camp => {
+        if (filterStatus === 'pending') return camp.status === 'pending';
+        if (filterStatus === 'active') return camp.status === 'active' || camp.status === 'approved';
+        if (filterStatus === 'hidden') return camp.status === 'hidden';
+        return true;
+    });
+
     return (
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
             <div className="p-6 border-b border-gray-100 flex flex-wrap items-center justify-between gap-4">
-                <div className="flex space-x-2">
-                    <button className="bg-primary text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg shadow-primary/20 hover:-translate-y-0.5 transition-transform">
+                <div className="flex flex-wrap items-center gap-2">
+                    <button
+                        onClick={() => setFilterStatus('all')}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold transition shadow-sm ${
+                            filterStatus === 'all'
+                                ? 'bg-slate-900 text-white shadow-slate-900/20'
+                                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                    >
                         Todas ({campaigns.length})
+                    </button>
+                    <button
+                        onClick={() => setFilterStatus('pending')}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm ${
+                            filterStatus === 'pending'
+                                ? 'bg-amber-600 text-white shadow-amber-600/20'
+                                : 'bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200'
+                        }`}
+                    >
+                        <Clock className="w-3.5 h-3.5" />
+                        Pendientes de Aprobación
+                        {pendingCount > 0 && (
+                            <span className="bg-red-500 text-white text-[10px] font-black px-1.5 py-0.2 rounded-full ml-0.5">
+                                {pendingCount}
+                            </span>
+                        )}
+                    </button>
+                    <button
+                        onClick={() => setFilterStatus('active')}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold transition shadow-sm ${
+                            filterStatus === 'active'
+                                ? 'bg-green-600 text-white shadow-green-600/20'
+                                : 'bg-green-50 text-green-700 hover:bg-green-100'
+                        }`}
+                    >
+                        Aprobadas / Activas ({activeCount})
+                    </button>
+                    <button
+                        onClick={() => setFilterStatus('hidden')}
+                        className={`px-3.5 py-2 rounded-xl text-xs font-bold transition shadow-sm ${
+                            filterStatus === 'hidden'
+                                ? 'bg-slate-700 text-white'
+                                : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                        }`}
+                    >
+                        Ocultas ({hiddenCount})
                     </button>
                     <button 
                         onClick={handleSyncAll}
-                        className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg shadow-red-200 hover:bg-red-700 transition-colors flex items-center space-x-2"
+                        className="bg-red-600 text-white px-3.5 py-2 rounded-xl text-xs font-bold shadow-sm hover:bg-red-700 transition-colors flex items-center space-x-1.5 ml-2"
+                        title="Recalcular totales basados en donaciones reales"
                     >
-                        <RefreshCw className="w-4 h-4" />
-                        <span>REPARAR TODO</span>
+                        <RefreshCw className="w-3.5 h-3.5" />
+                        <span>Reparar Totales</span>
                     </button>
                 </div>
                 <button onClick={fetchData} className="p-2 border border-gray-200 rounded-lg hover:bg-gray-50"><RefreshCw className="w-4 h-4 text-gray-500" /></button>
@@ -394,7 +457,14 @@ const CampaignsView = () => {
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-100">
-                        {campaigns.map((camp) => (
+                        {filteredCampaigns.length === 0 && (
+                            <tr>
+                                <td colSpan={5} className="px-6 py-12 text-center text-gray-400 text-sm">
+                                    No hay campañas en esta sección.
+                                </td>
+                            </tr>
+                        )}
+                        {filteredCampaigns.map((camp) => (
                             <tr key={camp.id} className="hover:bg-gray-50/50 transition-colors group">
                                 <td className="px-6 py-4">
                                     <div className="flex items-center space-x-3">
@@ -416,9 +486,26 @@ const CampaignsView = () => {
                                     <p className="text-xs text-gray-500">{camp.organizer?.city}</p>
                                 </td>
                                 <td className="px-6 py-4">
-                                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide ${camp.status === 'active' || camp.status === 'approved' ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
-                                        }`}>
-                                        {camp.status || 'active'}
+                                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide ${
+                                        camp.status === 'pending'
+                                            ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                                            : camp.status === 'active' || camp.status === 'approved'
+                                            ? 'bg-green-100 text-green-700'
+                                            : 'bg-gray-100 text-gray-700'
+                                    }`}>
+                                        {camp.status === 'pending' ? (
+                                            <>
+                                                <Clock className="w-3 h-3 mr-1 text-amber-600" />
+                                                Pendiente (24h)
+                                            </>
+                                        ) : camp.status === 'active' || camp.status === 'approved' ? (
+                                            <>
+                                                <CheckCircle2 className="w-3 h-3 mr-1 text-green-600" />
+                                                Aprobada
+                                            </>
+                                        ) : (
+                                            camp.status || 'activa'
+                                        )}
                                     </span>
                                 </td>
                                 <td className="px-6 py-4 font-bold text-sm">
@@ -426,6 +513,26 @@ const CampaignsView = () => {
                                 </td>
                                 <td className="px-6 py-4 text-right">
                                     <div className="flex items-center justify-end space-x-1">
+                                        {camp.status === 'pending' && (
+                                            <button
+                                                onClick={() => handleStatus(camp, 'approved')}
+                                                className="px-2.5 py-1 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 shadow-sm mr-1"
+                                                title="Aprobar campaña para que sea visible públicamente"
+                                            >
+                                                <CheckCircle className="w-3.5 h-3.5" />
+                                                Aprobar
+                                            </button>
+                                        )}
+                                        <SendMessageButton
+                                            userId={camp.organizerId || ''}
+                                            userEmail={camp.organizer?.email || ''}
+                                            userName={camp.organizer?.name || 'Organizador'}
+                                            campaignId={camp.id}
+                                            campaignTitle={camp.title}
+                                            preselectedCategory="Campaña"
+                                            buttonLabel=""
+                                            buttonClass="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition"
+                                        />
                                         <button
                                             onClick={() => {
                                                 setSelectedCampaign(camp);
@@ -444,8 +551,10 @@ const CampaignsView = () => {
                                         >
                                             <RefreshCw className="w-4 h-4" />
                                         </button>
-                                        <button onClick={() => handleStatus(camp.id, 'approved')} className="p-2 text-gray-400 hover:text-green-500 transition-colors hover:bg-green-50 rounded-lg" title="Aprobar"><CheckCircle className="w-4 h-4" /></button>
-                                        <button onClick={() => handleStatus(camp.id, 'hidden')} className="p-2 text-gray-400 hover:text-amber-500 transition-colors hover:bg-amber-50 rounded-lg" title="Ocultar"><XCircle className="w-4 h-4" /></button>
+                                        {camp.status !== 'pending' && (
+                                            <button onClick={() => handleStatus(camp, 'approved')} className="p-2 text-gray-400 hover:text-green-500 transition-colors hover:bg-green-50 rounded-lg" title="Aprobar"><CheckCircle className="w-4 h-4" /></button>
+                                        )}
+                                        <button onClick={() => handleStatus(camp, 'hidden')} className="p-2 text-gray-400 hover:text-amber-500 transition-colors hover:bg-amber-50 rounded-lg" title="Ocultar"><XCircle className="w-4 h-4" /></button>
                                         <button onClick={() => handleDelete(camp.id)} className="p-2 text-gray-400 hover:text-red-500 transition-colors hover:bg-red-50 rounded-lg" title="Eliminar"><Trash2 className="w-4 h-4" /></button>
                                     </div>
                                 </td>

@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Camera, Upload, Loader2, ChevronRight, User, Heart, Image as ImageIcon } from 'lucide-react';
+import { Camera, Upload, Loader2, ChevronRight, User, Heart, Image as ImageIcon, CheckCircle2, Clock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { createCampaign, uploadImage } from '../services/campaignService';
 import { useAuth } from '../context/AuthContext';
@@ -10,6 +10,7 @@ const StartCampaign = () => {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [selectedImage, setSelectedImage] = useState<File | null>(null);
     const [imagePreview, setImagePreview] = useState<string | null>(null);
+    const [createdCampaignId, setCreatedCampaignId] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const [formData, setFormData] = useState({
@@ -115,7 +116,7 @@ const StartCampaign = () => {
                 imageUrl: imageUrl
             });
 
-            navigate(`/campaign/${campaignId}`);
+            setCreatedCampaignId(campaignId);
         } catch (error: any) {
             console.error("Full error detail:", error);
             const errorMessage = error.message || "Error desconocido";
@@ -362,6 +363,49 @@ const StartCampaign = () => {
             <p className="text-center text-gray-400 text-sm mt-8">
                 Al publicar, aceptas nuestros <a href="#" className="underline hover:text-gray-600">Términos y Condiciones</a>.
             </p>
+
+            {/* Modal Informativo: Aprobación requerida dentro de 24 horas */}
+            {createdCampaignId && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="bg-white rounded-3xl p-8 max-w-lg w-full text-center shadow-2xl border border-gray-100">
+                        <div className="w-20 h-20 rounded-full bg-emerald-50 text-emerald-600 flex items-center justify-center mx-auto mb-5 ring-8 ring-emerald-50/50">
+                            <CheckCircle2 className="w-10 h-10 text-primary" />
+                        </div>
+
+                        <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-50 text-amber-700 text-xs font-bold uppercase tracking-wider mb-3 border border-amber-200">
+                            <Clock className="w-3.5 h-3.5" /> En proceso de revisión
+                        </span>
+
+                        <h2 className="text-2xl font-black text-gray-900 mb-3">
+                            ¡Campaña creada con éxito!
+                        </h2>
+
+                        <div className="bg-amber-50/90 rounded-2xl p-4 border border-amber-200 mb-6 text-left space-y-2">
+                            <p className="text-sm font-bold text-amber-900">
+                                ⏳ Pronto estará visible una vez sea aprobada por los administradores dentro de 24 horas.
+                            </p>
+                            <p className="text-xs text-amber-800 leading-relaxed">
+                                Para garantizar la veracidad, seguridad y transparencia de todas las causas recaudadas en Unidos EC, nuestro equipo administrativo revisa minuciosamente cada campaña antes de habilitarla públicamente para recibir donaciones.
+                            </p>
+                        </div>
+
+                        <div className="flex flex-col sm:flex-row gap-3">
+                            <button
+                                onClick={() => navigate(`/campaign/${createdCampaignId}`)}
+                                className="flex-1 py-3.5 px-5 bg-primary text-white font-bold rounded-xl hover:bg-[#008f5b] transition shadow-md shadow-primary/20 text-sm"
+                            >
+                                Ver estado de mi campaña
+                            </button>
+                            <button
+                                onClick={() => navigate('/')}
+                                className="py-3.5 px-5 bg-gray-100 text-gray-700 font-bold rounded-xl hover:bg-gray-200 transition text-sm"
+                            >
+                                Ir al Inicio
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

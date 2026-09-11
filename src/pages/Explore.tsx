@@ -63,7 +63,7 @@ const Explore = () => {
         const matchesSearch = camp.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
             camp.description.toLowerCase().includes(searchQuery.toLowerCase());
         const matchesCategory = selectedCategory ? camp.category === selectedCategory : true;
-        const isVisible = camp.status !== 'hidden' && camp.status !== 'reported';
+        const isVisible = camp.status === 'active' || camp.status === 'approved';
         return matchesSearch && matchesCategory && isVisible;
     });
 

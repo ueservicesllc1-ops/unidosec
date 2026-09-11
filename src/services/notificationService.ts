@@ -184,4 +184,10 @@ export const sendSystemNotification = {
             `${userName} ha respondido a su mensaje.`,
             { conversationId }
         ),
+    campaignApproved: (userId: string, campaignId: string, title: string) =>
+        createNotification(userId, 'campaign_status',
+            '🎉 Campaña Aprobada y Publicada',
+            `Tu campaña "${title}" ha sido aprobada por la administración y ya está visible para recibir donaciones.`,
+            { campaignId, actionUrl: `/campaign/${campaignId}` }
+        ),
 };

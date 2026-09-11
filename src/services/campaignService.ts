@@ -20,6 +20,7 @@ export interface CampaignData {
     videoUrl?: string;
     additionalImages?: string[];
     createdAt?: any;
+    status?: string;
 }
 
 export interface Donation {
@@ -51,7 +52,7 @@ export const createCampaign = async (data: CampaignData): Promise<string> => {
             createdAt: serverTimestamp(),
             currentAmount: 0,
             donorCount: 0,
-            status: 'active',
+            status: 'pending',
             // Verificación médica — obligatoria para categorías de salud
             medicalDocumentRequired: medicalRequired,
             medicalDocumentStatus: medicalRequired ? 'pending_upload' : 'not_required',

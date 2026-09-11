@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Helmet } from 'react-helmet-async';
-import { useParams } from 'react-router-dom';
+import { useParams, Link } from 'react-router-dom';
 import { doc, getDoc } from 'firebase/firestore';
 import { db } from '../firebase';
-import { Heart, Share2, User, MapPin, Facebook, Link as LinkIcon, MessageCircle, Landmark, X, Instagram, QrCode, Download } from 'lucide-react';
+import { Heart, Share2, User, MapPin, Facebook, Link as LinkIcon, MessageCircle, Landmark, X, Instagram, QrCode, Download, Clock } from 'lucide-react';
 import { QRCodeCanvas } from 'qrcode.react';
 import { getRecentDonations, toggleCampaignLike, type CampaignData, type Donation } from '../services/campaignService';
 import { useAuth } from '../context/AuthContext';
@@ -241,6 +241,37 @@ const CampaignDetails = () => {
     if (loading) return <div className="flex justify-center items-center h-screen"><div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-primary"></div></div>;
     if (!campaign) return <div className="text-center py-20">Campaña no encontrada</div>;
 
+    const isOwner = Boolean(user?.email && campaign.organizer?.email && user.email.toLowerCase() === campaign.organizer.email.toLowerCase());
+    const isAdmin = Boolean(user?.email && user.email.toLowerCase() === 'ueservicesllc1@gmail.com');
+
+    // Si la campaña está pendiente de aprobación y no es el dueño ni admin, mostrar pantalla informativa
+    if (campaign.status === 'pending' && !isOwner && !isAdmin) {
+        return (
+            <div className="max-w-xl mx-auto py-20 px-4 text-center">
+                <div className="bg-white rounded-3xl p-8 md:p-10 shadow-xl border border-gray-100 animate-in fade-in duration-200">
+                    <div className="w-16 h-16 rounded-full bg-amber-50 text-amber-600 flex items-center justify-center mx-auto mb-4 ring-8 ring-amber-50/50">
+                        <Clock className="w-8 h-8" />
+                    </div>
+                    <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-100 text-amber-800 text-xs font-bold uppercase tracking-wider mb-3">
+                        Campaña en Revisión
+                    </span>
+                    <h1 className="text-2xl font-black text-gray-900 mb-3">
+                        Esta campaña aún no está disponible públicamente
+                    </h1>
+                    <p className="text-sm text-gray-600 mb-6 leading-relaxed">
+                        Pronto estará visible una vez sea aprobada por los administradores dentro de 24 horas. Nuestro equipo de seguridad está validando la información para proteger a la comunidad.
+                    </p>
+                    <Link
+                        to="/explore"
+                        className="inline-flex items-center justify-center py-3 px-6 bg-primary text-white font-bold rounded-xl hover:bg-[#008f5b] transition shadow-md shadow-primary/20 text-sm"
+                    >
+                        Explorar campañas activas
+                    </Link>
+                </div>
+            </div>
+        );
+    }
+
     const progress = Math.min((campaign.currentAmount / campaign.goal) * 100, 100);
 
     const campaignUrl = window.location.href;
@@ -251,6 +282,30 @@ const CampaignDetails = () => {
 
     return (
         <div className="max-w-6xl mx-auto px-4 pb-12 pt-6">
+            {/* Banner de Campaña en Revisión para el creador y admin */}
+            {campaign.status === 'pending' && (
+                <div className="mb-6 p-5 bg-gradient-to-r from-amber-50 to-orange-50 border border-amber-200 rounded-2xl flex items-start gap-4 shadow-sm">
+                    <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <Clock className="w-5 h-5" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-1 flex-wrap">
+                            <span className="text-xs font-black uppercase tracking-wider px-2 py-0.5 bg-amber-200 text-amber-900 rounded-md">
+                                En Revisión Administrativa
+                            </span>
+                            <span className="text-xs text-amber-800 font-semibold">
+                                {isOwner ? 'Solo visible para ti (creador) y administradores' : 'Vista previa de Administrador'}
+                            </span>
+                        </div>
+                        <p className="text-sm font-bold text-gray-900">
+                            ⏳ Pronto estará visible una vez sea aprobada por los administradores dentro de 24 horas.
+                        </p>
+                        <p className="text-xs text-gray-600 mt-1">
+                            Durante este periodo de validación, la campaña no aparece en listados públicos ni permite recibir donaciones de terceros.
+                        </p>
+                    </div>
+                </div>
+            )}
             <Helmet>
                 <title>{campaign.title} | EcuFund</title>
                 <meta name="description" content={ogDescription} />
@@ -446,10 +501,21 @@ const CampaignDetails = () => {
                             {/* Actions */}
                             <div className="space-y-3">
                                 <div className="w-full relative z-10">
-                                    <PayPalDonationButton
-                                        campaignId={campaign.id}
-                                        onSuccess={handleDonationSuccess}
-                                    />
+                                    {campaign.status === 'pending' ? (
+                                        <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-xl text-center">
+                                            <p className="text-xs font-bold text-amber-900 flex items-center justify-center gap-1.5">
+                                                <Clock className="w-3.5 h-3.5 text-amber-600" /> Donaciones Deshabilitadas
+                                            </p>
+                                            <p className="text-[11px] text-amber-700 mt-1">
+                                                Campaña en revisión de seguridad. Estará disponible una vez sea aprobada dentro de 24h.
+                                            </p>
+                                        </div>
+                                    ) : (
+                                        <PayPalDonationButton
+                                            campaignId={campaign.id}
+                                            onSuccess={handleDonationSuccess}
+                                        />
+                                    )}
                                 </div>
 
                                 {/* Like Button (Sidebar) */}

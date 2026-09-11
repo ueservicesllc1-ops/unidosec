@@ -43,9 +43,9 @@ const Home = () => {
                         ...doc.data()
                     })) as Campaign[];
                 
-                // Sort by createdAt desc and filter visible
+                // Sort by createdAt desc and filter approved/active only
                 const sortedAndFiltered = fetchedCampaigns
-                    .filter(camp => camp.status !== 'hidden' && camp.status !== 'reported')
+                    .filter(camp => camp.status === 'active' || camp.status === 'approved')
                     .sort((a, b) => {
                         const dateA = a.createdAt?.seconds || 0;
                         const dateB = b.createdAt?.seconds || 0;
