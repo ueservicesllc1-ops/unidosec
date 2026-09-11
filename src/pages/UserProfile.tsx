@@ -157,7 +157,7 @@ const UserProfile = () => {
         </div>
 
         {/* Tabs */}
-        <div className="flex gap-1 bg-white border border-gray-200 rounded-2xl p-1 mb-6 shadow-sm w-fit">
+        <div className="flex gap-1 bg-white border border-gray-200 rounded-2xl p-1 mb-6 shadow-sm w-full sm:w-fit overflow-x-auto no-scrollbar">
           {([
             { id: "account" as Tab, label: "Mi Cuenta", icon: <User className="w-4 h-4" /> },
             { id: "messages" as Tab, label: "Mensajes", icon: <MessageSquare className="w-4 h-4" />, badge: unreadMsgs },
@@ -166,7 +166,7 @@ const UserProfile = () => {
             <button
               key={tab.id}
               onClick={() => switchTab(tab.id)}
-              className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm transition-all ${
+              className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 sm:py-2.5 rounded-xl font-bold text-xs sm:text-sm whitespace-nowrap transition-all flex-shrink-0 ${
                 activeTab === tab.id
                   ? "bg-primary text-white shadow"
                   : "text-gray-600 hover:bg-gray-50"
