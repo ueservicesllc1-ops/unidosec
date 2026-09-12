@@ -1,6 +1,6 @@
 import { db } from '../firebase';
 import { collection, addDoc, serverTimestamp, getDocs, query, orderBy, doc, updateDoc, getDoc } from 'firebase/firestore';
-import { canWithdraw } from './medicalVerificationService';
+import { canWithdraw, isCampaignRequiringMedicalDoc } from './medicalVerificationService';
 
 export interface WithdrawalRequest {
     id?: string;
@@ -45,8 +45,7 @@ export const createWithdrawalRequest = async (request: Omit<WithdrawalRequest, '
             // Snapshot del estado de autorización al momento de la solicitud
             authorizationChecks: {
                 goalReached: (campaign as any).currentAmount > 0,
-                medicalVerified: !(campaign as any).medicalDocumentRequired
-                    || (campaign as any).medicalDocumentStatus === 'approved',
+                medicalVerified: (campaign as any).medicalDocumentStatus === 'approved' || !isCampaignRequiringMedicalDoc(campaign),
             },
         });
         return docRef.id;

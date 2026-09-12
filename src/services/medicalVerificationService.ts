@@ -1,4 +1,4 @@
-﻿import { db, storage } from '../firebase';
+import { db, storage } from '../firebase';
 import {
     doc,
     updateDoc,
@@ -16,10 +16,31 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 // ─────────────────────────────────────────────────────────────
 // CATEGORÍAS QUE REQUIEREN VERIFICACIÓN MÉDICA OBLIGATORIA
 // ─────────────────────────────────────────────────────────────
-export const MEDICAL_CATEGORIES: string[] = ['Salud', 'Emergencia'];
+export const MEDICAL_CATEGORIES: string[] = [
+    'Salud', 'Emergencia', 'salud', 'emergencia',
+    'Médica', 'médica', 'Medica', 'medica',
+    'Tratamiento', 'tratamiento', 'Hospital', 'hospital'
+];
 
-export const isMedicalCampaign = (category: string): boolean =>
-    MEDICAL_CATEGORIES.includes(category);
+export const isMedicalCampaign = (category?: string): boolean => {
+    if (!category) return false;
+    const clean = category.trim().toLowerCase();
+    return MEDICAL_CATEGORIES.some(cat => cat.toLowerCase() === clean) ||
+        clean.includes('salud') ||
+        clean.includes('medic') ||
+        clean.includes('emergenc') ||
+        clean.includes('quirurg') ||
+        clean.includes('cancer') ||
+        clean.includes('hospit');
+};
+
+export const isCampaignRequiringMedicalDoc = (campaign: any): boolean => {
+    if (!campaign) return false;
+    if (campaign.medicalDocumentRequired === true) return true;
+    if (campaign.medicalDocumentRequired === false) return false;
+    // Fallback para campañas creadas con categoría médica o títulos de salud
+    return isMedicalCampaign(campaign.category) || isMedicalCampaign(campaign.title);
+};
 
 // ─────────────────────────────────────────────────────────────
 // TIPOS
@@ -59,13 +80,17 @@ export interface WithdrawalAuthorization {
 export const canWithdraw = (campaign: any): WithdrawalAuthorization => {
     const blockedBy: string[] = [];
 
-    // 1. Meta mínima: debe haber fondos
+    if (!campaign) {
+        return { allowed: false, blockedBy: ['CAMPAIGN_NOT_FOUND'] };
+    }
+
+    // 1. Meta mínima: debe haber fondos recaudados
     if ((campaign.currentAmount ?? 0) <= 0) {
         blockedBy.push('NO_FUNDS');
     }
 
     // 2. Verificación médica obligatoria cuando aplica
-    if (campaign.medicalDocumentRequired === true) {
+    if (isCampaignRequiringMedicalDoc(campaign)) {
         const medStatus: MedicalDocumentStatus = campaign.medicalDocumentStatus ?? 'pending_upload';
         if (medStatus !== 'approved') {
             blockedBy.push(`MEDICAL_DOC_NOT_APPROVED:${medStatus}`);
@@ -186,11 +211,20 @@ export const getMedicalVerificationLog = async (
 // OBTENER CAMPAÑAS CON VERIFICACIÓN MÉDICA (para el panel admin)
 // ─────────────────────────────────────────────────────────────
 export const getAllMedicalCampaigns = async (): Promise<any[]> => {
-    const q = query(
-        collection(db, 'campaigns'),
-        where('medicalDocumentRequired', '==', true),
-        orderBy('createdAt', 'desc')
-    );
-    const snap = await getDocs(q);
-    return snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    try {
+        const q = query(
+            collection(db, 'campaigns'),
+            orderBy('createdAt', 'desc')
+        );
+        const snap = await getDocs(q);
+        return snap.docs
+            .map(d => ({ id: d.id, ...d.data() }))
+            .filter(c => isCampaignRequiringMedicalDoc(c));
+    } catch (e) {
+        // Fallback si el índice orderBy falla
+        const snap = await getDocs(collection(db, 'campaigns'));
+        return snap.docs
+            .map(d => ({ id: d.id, ...d.data() }))
+            .filter(c => isCampaignRequiringMedicalDoc(c));
+    }
 };
