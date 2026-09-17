@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { MessageSquare, X, Send, RefreshCw, FileText } from "lucide-react";
+import { MessageSquare, X, Send, RefreshCw, FileText, Image as ImageIcon } from "lucide-react";
 import { db } from "../firebase";
 import { collection, query, where, getDocs } from "firebase/firestore";
 import {
   createConversation,
+  uploadMessageAttachment,
   type MessageCategory,
 } from "../services/messagingService";
 import { sendSystemNotification } from "../services/notificationService";
@@ -81,6 +82,31 @@ const SendMessageButton = ({
   });
   const [sending, setSending] = useState(false);
 
+  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const [attachedPreviews, setAttachedPreviews] = useState<string[]>([]);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+    const filesArray = Array.from(e.target.files);
+    const validImages = filesArray.filter((f) => f.type.startsWith("image/"));
+    if (validImages.length === 0) {
+      alert("Por favor selecciona únicamente archivos de imagen.");
+      return;
+    }
+    const previews = validImages.map((f) => URL.createObjectURL(f));
+    setAttachedFiles((prev) => [...prev, ...validImages]);
+    setAttachedPreviews((prev) => [...prev, ...previews]);
+    e.target.value = "";
+  };
+
+  const handleRemoveAttachment = (index: number) => {
+    setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
+    setAttachedPreviews((prev) => {
+      URL.revokeObjectURL(prev[index]);
+      return prev.filter((_, i) => i !== index);
+    });
+  };
+
   const applyTemplate = (cat: string) => {
     const tpl = MESSAGE_TEMPLATES[cat];
     if (tpl) {
@@ -94,8 +120,8 @@ const SendMessageButton = ({
   };
 
   const handleSend = async () => {
-    if (!form.subject.trim() || !form.message.trim()) {
-      alert("Por favor completa el asunto y el mensaje.");
+    if (!form.subject.trim() || (!form.message.trim() && attachedFiles.length === 0)) {
+      alert("Por favor completa el asunto y el mensaje o adjunta una imagen.");
       return;
     }
     setSending(true);
@@ -120,6 +146,13 @@ const SendMessageButton = ({
         targetUserId = userEmail || "usuario_anonimo";
       }
 
+      let uploadedUrls: string[] = [];
+      if (attachedFiles.length > 0) {
+        uploadedUrls = await Promise.all(
+          attachedFiles.map((f) => uploadMessageAttachment(f))
+        );
+      }
+
       const convId = await createConversation({
         userId: targetUserId,
         userEmail: userEmail || "",
@@ -129,6 +162,7 @@ const SendMessageButton = ({
         subject: form.subject,
         category: form.category,
         firstMessage: form.message,
+        attachments: uploadedUrls,
         adminId: "admin",
         adminName: "Administración Unidos EC",
       });
@@ -140,6 +174,9 @@ const SendMessageButton = ({
         userEmail
       );
 
+      attachedPreviews.forEach((url) => URL.revokeObjectURL(url));
+      setAttachedFiles([]);
+      setAttachedPreviews([]);
       setOpen(false);
       setForm({ subject: "", category: "Soporte", message: "" });
       onSent?.(convId);
@@ -268,12 +305,54 @@ const SendMessageButton = ({
                   <span className="text-[11px] text-gray-400">Puedes editar este texto libremente</span>
                 </div>
                 <textarea
-                  rows={8}
+                  rows={6}
                   className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-sm resize-none"
                   placeholder="Escribe el mensaje para el usuario..."
                   value={form.message}
                   onChange={(e) => setForm({ ...form, message: e.target.value })}
                 />
+              </div>
+
+              {/* Adjuntar Fotos / Imágenes */}
+              <div>
+                <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
+                  Adjuntar Fotos o Imágenes (Opcional)
+                </label>
+                {attachedPreviews.length > 0 && (
+                  <div className="flex items-center gap-2 mb-2 p-2 bg-slate-50 border border-gray-200 rounded-xl overflow-x-auto">
+                    {attachedPreviews.map((url, i) => (
+                      <div
+                        key={i}
+                        className="relative w-14 h-14 rounded-lg overflow-hidden border border-gray-200 flex-shrink-0 group"
+                      >
+                        <img
+                          src={url}
+                          alt="Adjunto"
+                          className="w-full h-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveAttachment(i)}
+                          className="absolute top-0.5 right-0.5 bg-black/70 hover:bg-red-600 text-white p-0.5 rounded-full transition shadow"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <label className="inline-flex items-center gap-2 px-3.5 py-2 bg-gray-50 border border-gray-200 hover:bg-blue-50 hover:text-blue-600 text-gray-700 text-xs font-bold rounded-xl cursor-pointer transition">
+                  <ImageIcon className="w-4 h-4 text-blue-600" />
+                  <span>Seleccionar fotos</span>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    className="hidden"
+                    onChange={handleFileChange}
+                    disabled={sending}
+                  />
+                </label>
               </div>
 
               <div className="flex gap-3 pt-2">
@@ -285,7 +364,7 @@ const SendMessageButton = ({
                 </button>
                 <button
                   onClick={handleSend}
-                  disabled={sending || !form.subject.trim() || !form.message.trim()}
+                  disabled={sending || !form.subject.trim() || (!form.message.trim() && attachedFiles.length === 0)}
                   className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-bold transition disabled:opacity-40 flex items-center justify-center gap-2"
                 >
                   {sending ? (

@@ -30,6 +30,9 @@ import {
     History,
     Send,
     FileCheck,
+    Image as ImageIcon,
+    Maximize2,
+    Paperclip,
 } from 'lucide-react';
 import {
     getAllCampaigns,
@@ -63,6 +66,7 @@ import {
     createConversation,
     editMessage,
     deleteMessage,
+    uploadMessageAttachment,
     type Conversation,
     type Message,
     type ConversationStatus,
@@ -1672,6 +1676,11 @@ const AdminMessagesView = () => {
     const [replyText, setReplyText] = useState('');
     const [sendingReply, setSendingReply] = useState(false);
 
+    // Adjuntos en el chat de respuesta
+    const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+    const [attachedPreviews, setAttachedPreviews] = useState<string[]>([]);
+    const [previewModalImage, setPreviewModalImage] = useState<string | null>(null);
+
     // Edición de mensajes enviados
     const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
     const [editingText, setEditingText] = useState('');
@@ -1693,6 +1702,8 @@ const AdminMessagesView = () => {
     const [newSubject, setNewSubject] = useState('');
     const [newBody, setNewBody] = useState('');
     const [submittingNew, setSubmittingNew] = useState(false);
+    const [newAttachedFiles, setNewAttachedFiles] = useState<File[]>([]);
+    const [newAttachedPreviews, setNewAttachedPreviews] = useState<string[]>([]);
 
     // Suscripción en tiempo real a todas las conversaciones
     useEffect(() => {
@@ -1730,17 +1741,47 @@ const AdminMessagesView = () => {
 
     const activeConversation = conversations.find((c) => c.id === selectedConvId);
 
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (!e.target.files) return;
+        const filesArray = Array.from(e.target.files);
+        const validImages = filesArray.filter((f) => f.type.startsWith('image/'));
+        if (validImages.length === 0) {
+            alert('Por favor selecciona únicamente archivos de imagen (JPEG, PNG, WebP).');
+            return;
+        }
+        const previews = validImages.map((f) => URL.createObjectURL(f));
+        setAttachedFiles((prev) => [...prev, ...validImages]);
+        setAttachedPreviews((prev) => [...prev, ...previews]);
+        e.target.value = '';
+    };
+
+    const handleRemoveAttachment = (index: number) => {
+        setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
+        setAttachedPreviews((prev) => {
+            URL.revokeObjectURL(prev[index]);
+            return prev.filter((_, i) => i !== index);
+        });
+    };
+
     const handleSendReply = async () => {
-        if (!replyText.trim() || !selectedConvId || !activeConversation) return;
+        if ((!replyText.trim() && attachedFiles.length === 0) || !selectedConvId || !activeConversation) return;
 
         setSendingReply(true);
         try {
+            let uploadedUrls: string[] = [];
+            if (attachedFiles.length > 0) {
+                uploadedUrls = await Promise.all(
+                    attachedFiles.map((file) => uploadMessageAttachment(file))
+                );
+            }
+
             await sendMessage(
                 selectedConvId,
                 replyText.trim(),
                 'admin',
                 'admin',
-                'Administración Unidos EC'
+                'Administración Unidos EC',
+                uploadedUrls
             );
 
             await sendSystemNotification.newAdminMessage(
@@ -1751,9 +1792,12 @@ const AdminMessagesView = () => {
             );
 
             setReplyText('');
+            attachedPreviews.forEach((url) => URL.revokeObjectURL(url));
+            setAttachedFiles([]);
+            setAttachedPreviews([]);
         } catch (error) {
             console.error('Error al enviar respuesta:', error);
-            alert('Error al enviar la respuesta');
+            alert('Error al enviar la respuesta o al subir las imágenes adjuntas');
         } finally {
             setSendingReply(false);
         }
@@ -1805,18 +1849,47 @@ const AdminMessagesView = () => {
         }
     };
 
+    const handleNewFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (!e.target.files) return;
+        const filesArray = Array.from(e.target.files);
+        const validImages = filesArray.filter((f) => f.type.startsWith('image/'));
+        if (validImages.length === 0) {
+            alert('Por favor selecciona únicamente archivos de imagen.');
+            return;
+        }
+        const previews = validImages.map((f) => URL.createObjectURL(f));
+        setNewAttachedFiles((prev) => [...prev, ...validImages]);
+        setNewAttachedPreviews((prev) => [...prev, ...previews]);
+        e.target.value = '';
+    };
+
+    const handleRemoveNewAttachment = (index: number) => {
+        setNewAttachedFiles((prev) => prev.filter((_, i) => i !== index));
+        setNewAttachedPreviews((prev) => {
+            URL.revokeObjectURL(prev[index]);
+            return prev.filter((_, i) => i !== index);
+        });
+    };
+
     const handleCreateConversation = async () => {
         if (!selectedUser) {
             alert('Por favor selecciona un usuario destinatario.');
             return;
         }
-        if (!newSubject.trim() || !newBody.trim()) {
-            alert('Por favor completa el asunto y el mensaje.');
+        if (!newSubject.trim() || (!newBody.trim() && newAttachedFiles.length === 0)) {
+            alert('Por favor completa el asunto y el mensaje o adjunta una imagen.');
             return;
         }
 
         setSubmittingNew(true);
         try {
+            let uploadedUrls: string[] = [];
+            if (newAttachedFiles.length > 0) {
+                uploadedUrls = await Promise.all(
+                    newAttachedFiles.map((file) => uploadMessageAttachment(file))
+                );
+            }
+
             const matchedCampaign = allCampaigns.find((c) => c.id === selectedCampaignId);
             const convId = await createConversation({
                 userId: selectedUser.uid,
@@ -1827,6 +1900,7 @@ const AdminMessagesView = () => {
                 subject: newSubject.trim(),
                 category: newCategory,
                 firstMessage: newBody.trim(),
+                attachments: uploadedUrls,
                 adminId: 'admin',
                 adminName: 'Administración Unidos EC',
             });
@@ -1844,6 +1918,9 @@ const AdminMessagesView = () => {
             setNewSubject('');
             setNewBody('');
             setUserSearch('');
+            newAttachedPreviews.forEach((url) => URL.revokeObjectURL(url));
+            setNewAttachedFiles([]);
+            setNewAttachedPreviews([]);
             setSelectedConvId(convId);
             alert('✅ Conversación iniciada correctamente.');
         } catch (error) {
@@ -2285,9 +2362,45 @@ const AdminMessagesView = () => {
                                                             </div>
                                                         </div>
                                                     ) : (
-                                                        <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                                                            {m.message}
-                                                        </p>
+                                                        <>
+                                                            {m.message && (
+                                                                <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                                                                    {m.message}
+                                                                </p>
+                                                            )}
+                                                            {/* Fotos adjuntas en el mensaje */}
+                                                            {m.attachments && m.attachments.length > 0 && (
+                                                                <div
+                                                                    className={`mt-2.5 grid gap-2 ${
+                                                                        m.attachments.length === 1
+                                                                            ? 'grid-cols-1 max-w-[280px]'
+                                                                            : 'grid-cols-2 max-w-[360px]'
+                                                                    }`}
+                                                                >
+                                                                    {m.attachments.map((url, idx) => (
+                                                                        <div
+                                                                            key={idx}
+                                                                            onClick={() => setPreviewModalImage(url)}
+                                                                            className={`group/img relative rounded-xl overflow-hidden cursor-pointer aspect-video flex items-center justify-center hover:opacity-95 transition shadow-sm ${
+                                                                                isAdmin
+                                                                                    ? 'border border-slate-700 bg-slate-800'
+                                                                                    : 'border border-gray-200 bg-gray-100'
+                                                                            }`}
+                                                                        >
+                                                                            <img
+                                                                                src={url}
+                                                                                alt={`Adjunto ${idx + 1}`}
+                                                                                className="w-full h-full object-cover transition-transform duration-200 group-hover/img:scale-105"
+                                                                                loading="lazy"
+                                                                            />
+                                                                            <div className="absolute inset-0 bg-black/30 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center text-white">
+                                                                                <Maximize2 className="w-5 h-5 drop-shadow" />
+                                                                            </div>
+                                                                        </div>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                        </>
                                                     )}
 
                                                     {isAdmin && !isEditing && (
@@ -2305,9 +2418,59 @@ const AdminMessagesView = () => {
                                     })}
                             </div>
 
-                            {/* Caja de Respuesta */}
-                            <div className="p-4 bg-white border-t border-gray-100">
-                                <div className="flex gap-2">
+                            {/* Caja de Respuesta con Adjuntos */}
+                            <div className="bg-white border-t border-gray-100">
+                                {/* Previsualización de imágenes adjuntas antes de enviar */}
+                                {attachedPreviews.length > 0 && (
+                                    <div className="flex items-center gap-2 px-4 py-2 bg-slate-50 border-b border-gray-100 overflow-x-auto">
+                                        {attachedPreviews.map((url, i) => (
+                                            <div
+                                                key={i}
+                                                className="relative w-14 h-14 rounded-lg overflow-hidden border border-gray-200 flex-shrink-0 group"
+                                            >
+                                                <img
+                                                    src={url}
+                                                    alt="Adjunto"
+                                                    className="w-full h-full object-cover"
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRemoveAttachment(i)}
+                                                    className="absolute top-0.5 right-0.5 bg-black/70 hover:bg-red-600 text-white p-0.5 rounded-full transition shadow"
+                                                    title="Quitar imagen"
+                                                >
+                                                    <X className="w-3 h-3" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                        <span className="text-xs text-slate-500 font-medium ml-1">
+                                            {attachedPreviews.length}{' '}
+                                            {attachedPreviews.length === 1 ? 'foto lista' : 'fotos listas'}
+                                        </span>
+                                    </div>
+                                )}
+
+                                <div className="p-4 flex items-end gap-2">
+                                    {/* Botón para adjuntar foto */}
+                                    <label
+                                        className={`p-3 border rounded-xl cursor-pointer transition flex items-center justify-center flex-shrink-0 ${
+                                            attachedPreviews.length > 0
+                                                ? 'bg-blue-50 border-blue-200 text-blue-600'
+                                                : 'bg-gray-50 border-gray-200 text-gray-500 hover:text-blue-600 hover:bg-blue-50'
+                                        }`}
+                                        title="Adjuntar fotos o imágenes"
+                                    >
+                                        <ImageIcon className="w-5 h-5" />
+                                        <input
+                                            type="file"
+                                            accept="image/*"
+                                            multiple
+                                            className="hidden"
+                                            onChange={handleFileChange}
+                                            disabled={sendingReply}
+                                        />
+                                    </label>
+
                                     <textarea
                                         rows={2}
                                         value={replyText}
@@ -2321,15 +2484,19 @@ const AdminMessagesView = () => {
                                         placeholder="Escribe una respuesta como administrador... (Presiona Enter para enviar)"
                                         className="flex-1 p-3 text-sm bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none"
                                     />
+
                                     <button
                                         onClick={handleSendReply}
-                                        disabled={sendingReply || !replyText.trim()}
-                                        className="px-5 bg-primary text-white rounded-xl font-bold hover:bg-[#008f5b] transition disabled:opacity-40 flex items-center justify-center flex-shrink-0"
+                                        disabled={sendingReply || (!replyText.trim() && attachedFiles.length === 0)}
+                                        className="px-5 py-3 bg-primary text-white rounded-xl font-bold hover:bg-[#008f5b] transition disabled:opacity-40 flex items-center justify-center flex-shrink-0 gap-1.5 shadow-sm"
                                     >
                                         {sendingReply ? (
                                             <RefreshCw className="w-5 h-5 animate-spin" />
                                         ) : (
-                                            <Send className="w-5 h-5" />
+                                            <>
+                                                <Send className="w-5 h-5" />
+                                                <span className="hidden sm:inline text-xs">Enviar</span>
+                                            </>
                                         )}
                                     </button>
                                 </div>
@@ -2528,6 +2695,48 @@ const AdminMessagesView = () => {
                                     className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20 resize-none"
                                 />
                             </div>
+
+                            {/* Adjuntar Fotos / Imágenes */}
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
+                                    Adjuntar Fotos o Imágenes (Opcional)
+                                </label>
+                                {newAttachedPreviews.length > 0 && (
+                                    <div className="flex items-center gap-2 mb-2 p-2 bg-slate-50 border border-gray-200 rounded-xl overflow-x-auto">
+                                        {newAttachedPreviews.map((url, i) => (
+                                            <div
+                                                key={i}
+                                                className="relative w-14 h-14 rounded-lg overflow-hidden border border-gray-200 flex-shrink-0 group"
+                                            >
+                                                <img
+                                                    src={url}
+                                                    alt="Adjunto"
+                                                    className="w-full h-full object-cover"
+                                                />
+                                                <button
+                                                    type="button"
+                                                    onClick={() => handleRemoveNewAttachment(i)}
+                                                    className="absolute top-0.5 right-0.5 bg-black/70 hover:bg-red-600 text-white p-0.5 rounded-full transition shadow"
+                                                >
+                                                    <X className="w-3 h-3" />
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                                <label className="inline-flex items-center gap-2 px-3.5 py-2 bg-gray-50 border border-gray-200 hover:bg-blue-50 hover:text-blue-600 text-gray-700 text-xs font-bold rounded-xl cursor-pointer transition">
+                                    <ImageIcon className="w-4 h-4 text-blue-600" />
+                                    <span>Seleccionar fotos</span>
+                                    <input
+                                        type="file"
+                                        accept="image/*"
+                                        multiple
+                                        className="hidden"
+                                        onChange={handleNewFileChange}
+                                        disabled={submittingNew}
+                                    />
+                                </label>
+                            </div>
                         </div>
 
                         <div className="p-5 border-t border-gray-100 flex gap-3 justify-end bg-gray-50 rounded-b-2xl">
@@ -2554,6 +2763,43 @@ const AdminMessagesView = () => {
                                     </>
                                 )}
                             </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal Visor de Imagen Ampliada */}
+            {previewModalImage && (
+                <div
+                    className="fixed inset-0 z-[350] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+                    onClick={() => setPreviewModalImage(null)}
+                >
+                    <div className="relative max-w-4xl max-h-[90vh] flex flex-col items-center">
+                        <button
+                            onClick={() => setPreviewModalImage(null)}
+                            className="absolute -top-10 right-0 text-white/80 hover:text-white p-1 rounded-full bg-black/50 hover:bg-black/70 transition"
+                            title="Cerrar imagen"
+                        >
+                            <X className="w-6 h-6" />
+                        </button>
+                        <img
+                            src={previewModalImage}
+                            alt="Vista previa ampliada"
+                            className="max-w-full max-h-[80vh] rounded-2xl object-contain shadow-2xl"
+                            onClick={(e) => e.stopPropagation()}
+                        />
+                        <div className="mt-3 flex items-center gap-3">
+                            <a
+                                href={previewModalImage}
+                                target="_blank"
+                                rel="noreferrer"
+                                download
+                                onClick={(e) => e.stopPropagation()}
+                                className="px-4 py-2 bg-white/20 hover:bg-white/30 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 backdrop-blur"
+                            >
+                                <Download className="w-4 h-4" />
+                                Abrir en pestaña nueva
+                            </a>
                         </div>
                     </div>
                 </div>

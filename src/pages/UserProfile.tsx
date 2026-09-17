@@ -11,6 +11,9 @@ import {
   Edit3,
   Check,
   X,
+  Image as ImageIcon,
+  Maximize2,
+  Download,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -19,6 +22,7 @@ import {
   sendMessage,
   markConversationAsRead,
   editMessage,
+  uploadMessageAttachment,
   type Conversation,
   type Message,
 } from "../services/messagingService";
@@ -61,6 +65,33 @@ const UserProfile = () => {
   const [replyText, setReplyText] = useState("");
   const [sending, setSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Adjuntos de fotos del usuario
+  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  const [attachedPreviews, setAttachedPreviews] = useState<string[]>([]);
+  const [previewModalImage, setPreviewModalImage] = useState<string | null>(null);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files) return;
+    const filesArray = Array.from(e.target.files);
+    const validImages = filesArray.filter((f) => f.type.startsWith("image/"));
+    if (validImages.length === 0) {
+      alert("Por favor selecciona únicamente archivos de imagen (JPEG, PNG, WebP).");
+      return;
+    }
+    const previews = validImages.map((f) => URL.createObjectURL(f));
+    setAttachedFiles((prev) => [...prev, ...validImages]);
+    setAttachedPreviews((prev) => [...prev, ...previews]);
+    e.target.value = "";
+  };
+
+  const handleRemoveAttachment = (index: number) => {
+    setAttachedFiles((prev) => prev.filter((_, i) => i !== index));
+    setAttachedPreviews((prev) => {
+      URL.revokeObjectURL(prev[index]);
+      return prev.filter((_, i) => i !== index);
+    });
+  };
 
   // Edición de mensajes del usuario
   const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
@@ -148,17 +179,28 @@ const UserProfile = () => {
   };
 
   const handleSendReply = async () => {
-    if (!replyText.trim() || !selectedConv?.id || !user) return;
+    if ((!replyText.trim() && attachedFiles.length === 0) || !selectedConv?.id || !user) return;
     setSending(true);
     try {
+      let uploadedUrls: string[] = [];
+      if (attachedFiles.length > 0) {
+        uploadedUrls = await Promise.all(
+          attachedFiles.map((file) => uploadMessageAttachment(file))
+        );
+      }
+
       await sendMessage(
         selectedConv.id,
         replyText.trim(),
         "user",
         user.uid,
-        user.displayName ?? user.email ?? "Usuario"
+        user.displayName ?? user.email ?? "Usuario",
+        uploadedUrls
       );
       setReplyText("");
+      attachedPreviews.forEach((url) => URL.revokeObjectURL(url));
+      setAttachedFiles([]);
+      setAttachedPreviews([]);
     } catch (e) {
       console.error(e);
       alert("Error al enviar. Intenta nuevamente.");
@@ -418,7 +460,43 @@ const UserProfile = () => {
                               </div>
                             </div>
                           ) : (
-                            <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.message}</p>
+                            <>
+                              {msg.message && (
+                                <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.message}</p>
+                              )}
+                              {/* Imágenes adjuntas */}
+                              {msg.attachments && msg.attachments.length > 0 && (
+                                <div
+                                  className={`mt-2 grid gap-2 ${
+                                    msg.attachments.length === 1
+                                      ? "grid-cols-1 max-w-[260px]"
+                                      : "grid-cols-2 max-w-[320px]"
+                                  }`}
+                                >
+                                  {msg.attachments.map((url, idx) => (
+                                    <div
+                                      key={idx}
+                                      onClick={() => setPreviewModalImage(url)}
+                                      className={`group/img relative rounded-xl overflow-hidden cursor-pointer aspect-video flex items-center justify-center hover:opacity-95 transition shadow-sm ${
+                                        isAdmin
+                                          ? "border border-gray-200 bg-gray-100"
+                                          : "border border-white/20 bg-primary-600/30"
+                                      }`}
+                                    >
+                                      <img
+                                        src={url}
+                                        alt={`Adjunto ${idx + 1}`}
+                                        className="w-full h-full object-cover transition-transform duration-200 group-hover/img:scale-105"
+                                        loading="lazy"
+                                      />
+                                      <div className="absolute inset-0 bg-black/30 opacity-0 group-hover/img:opacity-100 transition-opacity flex items-center justify-center text-white">
+                                        <Maximize2 className="w-4 h-4 drop-shadow" />
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </>
                           )}
 
                           {!isEditing && (
@@ -440,8 +518,53 @@ const UserProfile = () => {
 
                 {/* Reply box */}
                 {selectedConv.status !== "closed" && selectedConv.status !== "archived" && (
-                  <div className="p-4 border-t border-gray-100 bg-white">
-                    <div className="flex gap-2">
+                  <div className="border-t border-gray-100 bg-white">
+                    {/* Previsualización de imágenes adjuntas */}
+                    {attachedPreviews.length > 0 && (
+                      <div className="flex items-center gap-2 px-4 py-2 bg-slate-50 border-b border-gray-100 overflow-x-auto">
+                        {attachedPreviews.map((url, i) => (
+                          <div
+                            key={i}
+                            className="relative w-14 h-14 rounded-lg overflow-hidden border border-gray-200 flex-shrink-0 group"
+                          >
+                            <img src={url} alt="Adjunto" className="w-full h-full object-cover" />
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveAttachment(i)}
+                              className="absolute top-0.5 right-0.5 bg-black/70 hover:bg-red-600 text-white p-0.5 rounded-full transition shadow"
+                              title="Quitar foto"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                        <span className="text-xs text-gray-500 ml-1 font-medium">
+                          {attachedPreviews.length}{" "}
+                          {attachedPreviews.length === 1 ? "foto seleccionada" : "fotos seleccionadas"}
+                        </span>
+                      </div>
+                    )}
+
+                    <div className="p-4 flex items-end gap-2">
+                      <label
+                        className={`p-3 border rounded-xl cursor-pointer transition flex items-center justify-center flex-shrink-0 ${
+                          attachedPreviews.length > 0
+                            ? "bg-blue-50 border-blue-200 text-blue-600"
+                            : "bg-gray-50 border-gray-200 text-gray-500 hover:text-primary hover:bg-primary/5"
+                        }`}
+                        title="Adjuntar fotos o comprobantes"
+                      >
+                        <ImageIcon className="w-5 h-5" />
+                        <input
+                          type="file"
+                          accept="image/*"
+                          multiple
+                          className="hidden"
+                          onChange={handleFileChange}
+                          disabled={sending}
+                        />
+                      </label>
+
                       <textarea
                         rows={2}
                         className="flex-1 p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-sm resize-none"
@@ -454,13 +577,13 @@ const UserProfile = () => {
                       />
                       <button
                         onClick={handleSendReply}
-                        disabled={sending || !replyText.trim()}
-                        className="px-4 bg-primary text-white rounded-xl font-bold disabled:opacity-40 hover:bg-[#008f5b] transition flex items-center"
+                        disabled={sending || (!replyText.trim() && attachedFiles.length === 0)}
+                        className="px-4 py-3 bg-primary text-white rounded-xl font-bold disabled:opacity-40 hover:bg-[#008f5b] transition flex items-center flex-shrink-0 gap-1.5 shadow-sm"
                       >
                         {sending ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                       </button>
                     </div>
-                    <p className="text-[10px] text-gray-400 mt-1 text-right">Enter para enviar · Shift+Enter para nueva línea</p>
+                    <p className="text-[10px] text-gray-400 px-4 pb-2 text-right">Enter para enviar · Shift+Enter para nueva línea</p>
                   </div>
                 )}
 
@@ -529,6 +652,43 @@ const UserProfile = () => {
           </div>
         )}
       </div>
+
+      {/* Modal Visor de Imagen Ampliada */}
+      {previewModalImage && (
+        <div
+          className="fixed inset-0 z-[350] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setPreviewModalImage(null)}
+        >
+          <div className="relative max-w-4xl max-h-[90vh] flex flex-col items-center">
+            <button
+              onClick={() => setPreviewModalImage(null)}
+              className="absolute -top-10 right-0 text-white/80 hover:text-white p-1 rounded-full bg-black/50 hover:bg-black/70 transition"
+              title="Cerrar imagen"
+            >
+              <X className="w-6 h-6" />
+            </button>
+            <img
+              src={previewModalImage}
+              alt="Vista previa ampliada"
+              className="max-w-full max-h-[80vh] rounded-2xl object-contain shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            />
+            <div className="mt-3 flex items-center gap-3">
+              <a
+                href={previewModalImage}
+                target="_blank"
+                rel="noreferrer"
+                download
+                onClick={(e) => e.stopPropagation()}
+                className="px-4 py-2 bg-white/20 hover:bg-white/30 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 backdrop-blur"
+              >
+                <Download className="w-4 h-4" />
+                Abrir en pestaña nueva
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

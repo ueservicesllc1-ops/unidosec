@@ -1,4 +1,4 @@
-import { db } from '../firebase';
+import { db, storage } from '../firebase';
 import {
     collection,
     addDoc,
@@ -15,6 +15,7 @@ import {
     writeBatch,
     deleteDoc,
 } from 'firebase/firestore';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
 // ─────────────────────────────────────────────────────────────
 // TIPOS
@@ -65,12 +66,29 @@ export interface Message {
     senderType: 'admin' | 'user';
     senderName: string;
     message: string;
+    attachments?: string[];
     isReadByUser: boolean;
     isReadByAdmin: boolean;
     createdAt: any;
     edited?: boolean;
     editedAt?: any;
 }
+
+// ─────────────────────────────────────────────────────────────
+// SUBIR ARCHIVO / FOTO ADJUNTA
+// ─────────────────────────────────────────────────────────────
+export const uploadMessageAttachment = async (file: File): Promise<string> => {
+    try {
+        const cleanFileName = file.name.replace(/[^a-z0-9.]/gi, '_').toLowerCase();
+        const storageRef = ref(storage, `messages/${Date.now()}_${cleanFileName}`);
+        const snapshot = await uploadBytes(storageRef, file);
+        const downloadURL = await getDownloadURL(snapshot.ref);
+        return downloadURL;
+    } catch (error) {
+        console.error('Error uploading message attachment: ', error);
+        throw error;
+    }
+};
 
 // ─────────────────────────────────────────────────────────────
 // CREAR CONVERSACIÓN (solo admin)
@@ -85,11 +103,16 @@ export const createConversation = async (
         subject: string;
         category: MessageCategory;
         firstMessage: string;
+        attachments?: string[];
         adminId: string;
         adminName: string;
     }
 ): Promise<string> => {
     const now = serverTimestamp();
+    const hasAttachments = data.attachments && data.attachments.length > 0;
+    const preview = data.firstMessage?.trim()
+        ? data.firstMessage.substring(0, 100)
+        : (hasAttachments ? '📷 [Foto adjunta]' : '');
 
     const convRef = await addDoc(collection(db, 'conversations'), {
         userId: data.userId,
@@ -103,7 +126,7 @@ export const createConversation = async (
         createdAt: now,
         updatedAt: now,
         lastMessageAt: now,
-        lastMessagePreview: data.firstMessage.substring(0, 100),
+        lastMessagePreview: preview,
         unreadByUser: 1,
         unreadByAdmin: 0,
         createdByAdmin: data.adminId,
@@ -115,7 +138,8 @@ export const createConversation = async (
         senderId: data.adminId,
         senderType: 'admin' as const,
         senderName: data.adminName,
-        message: data.firstMessage,
+        message: data.firstMessage || '',
+        attachments: data.attachments || [],
         isReadByUser: false,
         isReadByAdmin: true,
         createdAt: now,
@@ -132,10 +156,16 @@ export const sendMessage = async (
     message: string,
     senderType: 'admin' | 'user',
     senderId: string,
-    senderName: string
+    senderName: string,
+    attachments?: string[]
 ): Promise<void> => {
     const now = serverTimestamp();
     const batch = writeBatch(db);
+
+    const hasAttachments = attachments && attachments.length > 0;
+    const preview = message?.trim()
+        ? message.substring(0, 100)
+        : (hasAttachments ? '📷 [Foto adjunta]' : '');
 
     const msgRef = doc(collection(db, 'conversations', conversationId, 'messages'));
     batch.set(msgRef, {
@@ -143,7 +173,8 @@ export const sendMessage = async (
         senderId,
         senderType,
         senderName,
-        message,
+        message: message || '',
+        attachments: attachments || [],
         isReadByUser: senderType === 'user',
         isReadByAdmin: senderType === 'admin',
         createdAt: now,
@@ -156,7 +187,7 @@ export const sendMessage = async (
     batch.update(convRef, {
         lastMessageAt: now,
         updatedAt: now,
-        lastMessagePreview: message.substring(0, 100),
+        lastMessagePreview: preview,
         status: newStatus,
         ...(senderType === 'admin'
             ? { unreadByUser: increment(1) }
