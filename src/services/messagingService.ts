@@ -13,6 +13,7 @@ import {
     getDoc,
     increment,
     writeBatch,
+    deleteDoc,
 } from 'firebase/firestore';
 
 // ─────────────────────────────────────────────────────────────
@@ -67,6 +68,8 @@ export interface Message {
     isReadByUser: boolean;
     isReadByAdmin: boolean;
     createdAt: any;
+    edited?: boolean;
+    editedAt?: any;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -168,16 +171,99 @@ export const sendMessage = async (
 // ─────────────────────────────────────────────────────────────
 export const subscribeToUserConversations = (
     userId: string,
-    callback: (conversations: Conversation[]) => void
+    callback: (conversations: Conversation[]) => void,
+    userEmail?: string | null
 ) => {
-    const q = query(
-        collection(db, 'conversations'),
-        where('userId', '==', userId),
-        orderBy('lastMessageAt', 'desc')
-    );
-    return onSnapshot(q, (snap) => {
-        callback(snap.docs.map(d => ({ id: d.id, ...d.data() })) as Conversation[]);
-    });
+    if (!userId && !userEmail) {
+        callback([]);
+        return () => {};
+    }
+
+    const convsMap = new Map<string, Conversation>();
+
+    const updateCallback = () => {
+        const sorted = Array.from(convsMap.values()).sort((a, b) => {
+            const timeA = a.lastMessageAt?.seconds ? a.lastMessageAt.seconds * 1000 : (a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0);
+            const timeB = b.lastMessageAt?.seconds ? b.lastMessageAt.seconds * 1000 : (b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0);
+            return timeB - timeA;
+        });
+        callback(sorted);
+    };
+
+    const unsubs: (() => void)[] = [];
+
+    // Query por userId
+    if (userId) {
+        try {
+            const q = query(
+                collection(db, 'conversations'),
+                where('userId', '==', userId)
+            );
+            const unsub = onSnapshot(q, (snap) => {
+                snap.docChanges().forEach(change => {
+                    if (change.type === 'removed') {
+                        convsMap.delete(change.doc.id);
+                    } else {
+                        convsMap.set(change.doc.id, { id: change.doc.id, ...change.doc.data() } as Conversation);
+                    }
+                });
+                updateCallback();
+            }, (err) => {
+                console.warn("Conversations subscription warning (userId):", err);
+            });
+            unsubs.push(unsub);
+        } catch (e) {
+            console.warn("Error setting up conversations query for userId:", e);
+        }
+    }
+
+    // Query por userEmail (si es diferente de userId)
+    if (userEmail && userEmail !== userId) {
+        try {
+            const qEmail = query(
+                collection(db, 'conversations'),
+                where('userEmail', '==', userEmail)
+            );
+            const unsubEmail = onSnapshot(qEmail, (snap) => {
+                snap.docChanges().forEach(change => {
+                    if (change.type === 'removed') {
+                        convsMap.delete(change.doc.id);
+                    } else {
+                        convsMap.set(change.doc.id, { id: change.doc.id, ...change.doc.data() } as Conversation);
+                    }
+                });
+                updateCallback();
+            }, (err) => {
+                console.warn("Conversations subscription warning (userEmail):", err);
+            });
+            unsubs.push(unsubEmail);
+
+            // También buscar donde userId contenga el email (legacy)
+            const qLegacy = query(
+                collection(db, 'conversations'),
+                where('userId', '==', userEmail)
+            );
+            const unsubLegacy = onSnapshot(qLegacy, (snap) => {
+                snap.docChanges().forEach(change => {
+                    if (change.type === 'removed') {
+                        convsMap.delete(change.doc.id);
+                    } else {
+                        convsMap.set(change.doc.id, { id: change.doc.id, ...change.doc.data() } as Conversation);
+                    }
+                });
+                updateCallback();
+            }, (err) => {
+                console.warn("Conversations subscription warning (legacy email):", err);
+            });
+            unsubs.push(unsubLegacy);
+        } catch (e) {
+            console.warn("Error setting up email conversations query:", e);
+        }
+    }
+
+    return () => {
+        unsubs.forEach(u => u());
+    };
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -188,11 +274,18 @@ export const subscribeToMessages = (
     callback: (messages: Message[]) => void
 ) => {
     const q = query(
-        collection(db, 'conversations', conversationId, 'messages'),
-        orderBy('createdAt', 'asc')
+        collection(db, 'conversations', conversationId, 'messages')
     );
     return onSnapshot(q, (snap) => {
-        callback(snap.docs.map(d => ({ id: d.id, ...d.data() })) as Message[]);
+        const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() })) as Message[];
+        msgs.sort((a, b) => {
+            const timeA = a.createdAt?.seconds ? a.createdAt.seconds * 1000 : (a.createdAt ? new Date(a.createdAt).getTime() : 0);
+            const timeB = b.createdAt?.seconds ? b.createdAt.seconds * 1000 : (b.createdAt ? new Date(b.createdAt).getTime() : 0);
+            return timeA - timeB;
+        });
+        callback(msgs);
+    }, (err) => {
+        console.warn("Messages subscription warning:", err);
     });
 };
 
@@ -203,11 +296,18 @@ export const subscribeToAllConversations = (
     callback: (conversations: Conversation[]) => void
 ) => {
     const q = query(
-        collection(db, 'conversations'),
-        orderBy('lastMessageAt', 'desc')
+        collection(db, 'conversations')
     );
     return onSnapshot(q, (snap) => {
-        callback(snap.docs.map(d => ({ id: d.id, ...d.data() })) as Conversation[]);
+        const convs = snap.docs.map(d => ({ id: d.id, ...d.data() })) as Conversation[];
+        convs.sort((a, b) => {
+            const timeA = a.lastMessageAt?.seconds ? a.lastMessageAt.seconds * 1000 : (a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0);
+            const timeB = b.lastMessageAt?.seconds ? b.lastMessageAt.seconds * 1000 : (b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0);
+            return timeB - timeA;
+        });
+        callback(convs);
+    }, (err) => {
+        console.warn("All conversations subscription warning:", err);
     });
 };
 
@@ -280,3 +380,50 @@ export const subscribeToAdminUnreadCount = (
         callback(total);
     });
 };
+
+// ─────────────────────────────────────────────────────────────
+// EDITAR MENSAJE
+// ─────────────────────────────────────────────────────────────
+export const editMessage = async (
+    conversationId: string,
+    messageId: string,
+    newMessage: string,
+    isLastMessage: boolean = false
+): Promise<void> => {
+    const msgRef = doc(db, 'conversations', conversationId, 'messages', messageId);
+    await updateDoc(msgRef, {
+        message: newMessage,
+        edited: true,
+        editedAt: serverTimestamp(),
+    });
+
+    if (isLastMessage) {
+        const convRef = doc(db, 'conversations', conversationId);
+        await updateDoc(convRef, {
+            lastMessagePreview: newMessage.substring(0, 100),
+            updatedAt: serverTimestamp(),
+        });
+    }
+};
+
+// ─────────────────────────────────────────────────────────────
+// ELIMINAR MENSAJE
+// ─────────────────────────────────────────────────────────────
+export const deleteMessage = async (
+    conversationId: string,
+    messageId: string,
+    isLastMessage: boolean = false,
+    newLastPreview?: string
+): Promise<void> => {
+    const msgRef = doc(db, 'conversations', conversationId, 'messages', messageId);
+    await deleteDoc(msgRef);
+
+    if (isLastMessage && newLastPreview !== undefined) {
+        const convRef = doc(db, 'conversations', conversationId);
+        await updateDoc(convRef, {
+            lastMessagePreview: newLastPreview.substring(0, 100),
+            updatedAt: serverTimestamp(),
+        });
+    }
+};
+

@@ -15,7 +15,10 @@ export interface CampaignData {
         phone: string;
         city: string;
         address: string;
+        uid?: string;
     };
+    userId?: string;
+    organizerId?: string;
     imageUrl?: string;
     videoUrl?: string;
     additionalImages?: string[];

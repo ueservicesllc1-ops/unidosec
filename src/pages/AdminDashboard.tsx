@@ -29,6 +29,7 @@ import {
     ShieldCheck,
     History,
     Send,
+    FileCheck,
 } from 'lucide-react';
 import {
     getAllCampaigns,
@@ -45,9 +46,11 @@ import {
 import { getAllWithdrawalRequests, updateWithdrawalStatus, type WithdrawalRequest } from '../services/withdrawalService';
 import {
     getAllMedicalCampaigns,
+    updateVerificationDocumentStatus,
     updateMedicalDocumentStatus,
     getMedicalVerificationLog,
     type MedicalDocumentStatus,
+    type VerificationDocType,
     type MedicalVerificationLog,
 } from '../services/medicalVerificationService';
 import {
@@ -58,12 +61,14 @@ import {
     updateConversationStatus,
     subscribeToAdminUnreadCount,
     createConversation,
+    editMessage,
+    deleteMessage,
     type Conversation,
     type Message,
     type ConversationStatus,
     type MessageCategory,
 } from '../services/messagingService';
-import SendMessageButton from '../components/SendMessageButton';
+import SendMessageButton, { MESSAGE_TEMPLATES } from '../components/SendMessageButton';
 import { timeAgo, sendSystemNotification } from '../services/notificationService';
 import { Link } from 'react-router-dom';
 
@@ -117,7 +122,7 @@ const AdminDashboard = () => {
         { id: 'donations', label: 'Donaciones', icon: HeartHandshake },
         { id: 'users', label: 'Usuarios', icon: Users },
         { id: 'withdrawals', label: 'Retiros', icon: Landmark },
-        { id: 'medical', label: 'Verificación Médica', icon: Stethoscope },
+        { id: 'medical', label: 'Verificación de Documentos', icon: FileCheck },
         { id: 'messages', label: 'Mensajes', icon: MessageSquare, badge: adminUnreadCount },
         { id: 'accounting', label: 'Contabilidad', icon: Calculator },
         { id: 'campaigns', label: 'Campañas', icon: Megaphone },
@@ -331,9 +336,9 @@ const CampaignsView = () => {
         try {
             await updateCampaignStatus(camp.id, status);
             if (status === 'approved') {
-                const recipientId = camp.organizerId || camp.organizer?.email;
+                const recipientId = camp.organizerId || camp.userId || (camp.organizer as any)?.uid || camp.organizer?.email;
                 if (recipientId) {
-                    await sendSystemNotification.campaignApproved(recipientId, camp.id, camp.title).catch(console.error);
+                    await sendSystemNotification.campaignApproved(recipientId, camp.id, camp.title, camp.organizer?.email).catch(console.error);
                 }
             }
             fetchData();
@@ -524,7 +529,7 @@ const CampaignsView = () => {
                                             </button>
                                         )}
                                         <SendMessageButton
-                                            userId={camp.organizerId || ''}
+                                            userId={camp.organizerId || camp.userId || (camp.organizer as any)?.uid || camp.organizer?.email || ''}
                                             userEmail={camp.organizer?.email || ''}
                                             userName={camp.organizer?.name || 'Organizador'}
                                             campaignId={camp.id}
@@ -923,6 +928,13 @@ const WithdrawalsView = () => {
         setUpdatingId(id);
         try {
             await updateWithdrawalStatus(id, status);
+            const req = requests.find(r => r.id === id);
+            if (req) {
+                const recipientId = req.userId || req.organizerEmail;
+                if (recipientId && (status === 'completed' || status === 'rejected')) {
+                    await sendSystemNotification.withdrawalStatus(recipientId, req.campaignId, status, req.organizerEmail).catch(console.error);
+                }
+            }
             // Optimistic update: actualiza en el estado local
             setRequests(prev =>
                 prev.map(r => r.id === id ? { ...r, status } : r)
@@ -1049,21 +1061,31 @@ const AccountingView = () => (
 );
 
 // ─────────────────────────────────────────────────────────────────────────────
-// MEDICAL VERIFICATION VIEW
+// MEDICAL & DOCUMENT VERIFICATION VIEW (Centro de Auditoría y Respaldos)
 // ─────────────────────────────────────────────────────────────────────────────
+const DOC_TYPE_LABELS: Record<VerificationDocType, string> = {
+    medical: 'Certificado Médico / Epicrisis',
+    id_card: 'Cédula de Identidad',
+    bank_certificate: 'Certificado Bancario Oficial',
+    authorization_letter: 'Carta de Autorización',
+    additional: 'Respaldos Adicionales',
+};
+
 const MedicalVerificationView = () => {
     const [campaigns, setCampaigns] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [actionModal, setActionModal] = useState<{
         campaign: any;
+        docType: VerificationDocType | 'all';
         action: 'approved' | 'rejected' | 'more_info_required';
     } | null>(null);
+    const [selectedDocType, setSelectedDocType] = useState<VerificationDocType | 'all'>('all');
     const [adminNote, setAdminNote] = useState('');
     const [submitting, setSubmitting] = useState(false);
-    const [docViewUrl, setDocViewUrl] = useState<string | null>(null);
+    const [docViewModal, setDocViewModal] = useState<{ url: string; title: string } | null>(null);
     const [logModal, setLogModal] = useState<{ campaign: any; logs: MedicalVerificationLog[] } | null>(null);
     const [loadingLog, setLoadingLog] = useState(false);
-    const [filterStatus, setFilterStatus] = useState<'all' | MedicalDocumentStatus>('all');
+    const [filterStatus, setFilterStatus] = useState<'all' | 'under_review' | 'pending_upload' | 'approved' | 'rejected' | 'more_info_required'>('all');
 
     const fetchData = async () => {
         setLoading(true);
@@ -1079,31 +1101,57 @@ const MedicalVerificationView = () => {
 
     useEffect(() => { fetchData(); }, []);
 
-    const openActionModal = (campaign: any, action: 'approved' | 'rejected' | 'more_info_required') => {
+    const openActionModal = (
+        campaign: any,
+        docType: VerificationDocType | 'all',
+        action: 'approved' | 'rejected' | 'more_info_required'
+    ) => {
         setAdminNote('');
-        setActionModal({ campaign, action });
+        setSelectedDocType(docType);
+        setActionModal({ campaign, docType, action });
     };
 
     const handleSubmitAction = async () => {
         if (!actionModal) return;
         if ((actionModal.action === 'rejected' || actionModal.action === 'more_info_required') && !adminNote.trim()) {
-            alert('Debes escribir un motivo o nota antes de continuar.');
+            alert('Debes escribir un motivo o nota explicativa para el usuario.');
             return;
         }
         setSubmitting(true);
         try {
-            // Admin ID hardcoded a 'admin' — en producción usarías auth.currentUser.uid
-            await updateMedicalDocumentStatus(
-                actionModal.campaign.id,
-                actionModal.action,
-                'admin',
-                adminNote.trim()
-            );
+            const camp = actionModal.campaign;
+            const recipientId = camp.organizerId || camp.userId || (camp.organizer as any)?.uid || camp.organizer?.email;
+            const targetDocTypes: VerificationDocType[] = selectedDocType === 'all'
+                ? (['id_card', 'bank_certificate', 'authorization_letter', 'medical'] as VerificationDocType[])
+                : [selectedDocType];
+
+            for (const dt of targetDocTypes) {
+                await updateVerificationDocumentStatus(
+                    camp.id,
+                    dt,
+                    actionModal.action,
+                    'admin',
+                    adminNote.trim()
+                );
+
+                if (recipientId) {
+                    const label = DOC_TYPE_LABELS[dt] || dt;
+                    await sendSystemNotification.verificationDocReviewed(
+                        recipientId,
+                        camp.id,
+                        label,
+                        actionModal.action,
+                        adminNote.trim(),
+                        camp.organizer?.email
+                    ).catch(console.error);
+                }
+            }
+
             setActionModal(null);
             fetchData();
         } catch (e) {
             console.error(e);
-            alert('Error al actualizar el estado. Intenta de nuevo.');
+            alert('Error al actualizar el estado de los documentos. Intenta de nuevo.');
         } finally {
             setSubmitting(false);
         }
@@ -1122,28 +1170,39 @@ const MedicalVerificationView = () => {
         }
     };
 
-    const statusBadge = (status: string) => {
+    const docBadge = (status?: string) => {
+        const s = status || 'pending_upload';
         const map: Record<string, { label: string; cls: string }> = {
-            pending_upload:     { label: 'Pendiente de carga',  cls: 'bg-gray-100 text-gray-600' },
-            uploaded:           { label: 'Subido',              cls: 'bg-blue-100 text-blue-700' },
-            under_review:       { label: 'En revisión',        cls: 'bg-amber-100 text-amber-700' },
-            approved:           { label: 'Aprobado',            cls: 'bg-green-100 text-green-700' },
-            rejected:           { label: 'Rechazado',           cls: 'bg-red-100 text-red-600' },
-            more_info_required: { label: 'Más info requerida', cls: 'bg-purple-100 text-purple-700' },
-            not_required:       { label: 'No requerido',        cls: 'bg-gray-50 text-gray-400' },
+            pending_upload:     { label: 'Pendiente', cls: 'bg-gray-100 text-gray-600' },
+            uploaded:           { label: 'Subido', cls: 'bg-blue-100 text-blue-700' },
+            under_review:       { label: 'En revisión', cls: 'bg-amber-100 text-amber-800 animate-pulse' },
+            approved:           { label: 'Aprobado', cls: 'bg-emerald-100 text-emerald-800 font-bold' },
+            rejected:           { label: 'Rechazado', cls: 'bg-red-100 text-red-700' },
+            more_info_required: { label: 'Requiere info', cls: 'bg-purple-100 text-purple-700' },
+            not_required:       { label: 'No requerido', cls: 'bg-gray-50 text-gray-400' },
         };
-        const s = map[status] ?? { label: status, cls: 'bg-gray-100 text-gray-600' };
-        return <span className={`inline-flex items-center px-2 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider ${s.cls}`}>{s.label}</span>;
+        const item = map[s] ?? { label: s, cls: 'bg-gray-100 text-gray-600' };
+        return <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold uppercase tracking-wider ${item.cls}`}>{item.label}</span>;
     };
 
-    const actionLabel = (action: 'approved' | 'rejected' | 'more_info_required') => {
-        if (action === 'approved') return { title: 'Aprobar documentación médica', color: 'text-green-700 bg-green-50 border-green-200', btnClass: 'bg-green-600 hover:bg-green-700', icon: <ShieldCheck className="w-5 h-5 mr-2" /> };
-        if (action === 'rejected') return { title: 'Rechazar documentación', color: 'text-red-700 bg-red-50 border-red-200', btnClass: 'bg-red-600 hover:bg-red-700', icon: <XCircle className="w-5 h-5 mr-2" /> };
-        return { title: 'Solicitar más documentación', color: 'text-purple-700 bg-purple-50 border-purple-200', btnClass: 'bg-purple-600 hover:bg-purple-700', icon: <MessageSquare className="w-5 h-5 mr-2" /> };
-    };
+    const isCampaignUnderReview = (c: any) =>
+        c.medicalDocumentStatus === 'under_review' ||
+        c.idDocumentStatus === 'under_review' ||
+        c.bankCertificateStatus === 'under_review' ||
+        c.authorizationLetterStatus === 'under_review';
 
-    const filtered = filterStatus === 'all' ? campaigns : campaigns.filter(c => c.medicalDocumentStatus === filterStatus);
-    const pendingCount = campaigns.filter(c => c.medicalDocumentStatus === 'under_review').length;
+    const filtered = campaigns.filter(c => {
+        if (filterStatus === 'all') return true;
+        if (filterStatus === 'under_review') return isCampaignUnderReview(c);
+        return (
+            c.medicalDocumentStatus === filterStatus ||
+            c.idDocumentStatus === filterStatus ||
+            c.bankCertificateStatus === filterStatus ||
+            c.authorizationLetterStatus === filterStatus
+        );
+    });
+
+    const pendingCount = campaigns.filter(isCampaignUnderReview).length;
 
     if (loading) return <div className="flex justify-center items-center py-20"><RefreshCw className="animate-spin text-primary" /></div>;
 
@@ -1154,17 +1213,17 @@ const MedicalVerificationView = () => {
                 <div className="flex items-center justify-between flex-wrap gap-4">
                     <div className="flex items-center space-x-3">
                         <div className="bg-blue-100 p-3 rounded-xl">
-                            <Stethoscope className="w-6 h-6 text-blue-600" />
+                            <FileCheck className="w-6 h-6 text-blue-600" />
                         </div>
                         <div>
-                            <h2 className="text-lg font-bold text-gray-900">Verificación de Documentación Médica</h2>
-                            <p className="text-sm text-gray-500">Campañas que requieren certificación médica antes de poder retirar fondos</p>
+                            <h2 className="text-lg font-bold text-gray-900">Centro de Auditoría y Verificación de Documentos</h2>
+                            <p className="text-sm text-gray-500">Revisión de Cédulas, Certificados Bancarios, Cartas de Autorización y Epicrisis Médicas</p>
                         </div>
                     </div>
                     <div className="flex items-center gap-3">
                         {pendingCount > 0 && (
                             <span className="inline-flex items-center px-3 py-1 bg-amber-100 text-amber-800 rounded-full text-sm font-bold">
-                                <AlertTriangle className="w-4 h-4 mr-1" /> {pendingCount} pendiente{pendingCount > 1 ? 's' : ''} de revisión
+                                <AlertTriangle className="w-4 h-4 mr-1" /> {pendingCount} campaña{pendingCount > 1 ? 's' : ''} con documentos por revisar
                             </span>
                         )}
                         <button onClick={fetchData} className="p-2 border border-gray-200 rounded-lg hover:bg-gray-50">
@@ -1181,82 +1240,174 @@ const MedicalVerificationView = () => {
                             onClick={() => setFilterStatus(s)}
                             className={`px-3 py-1 rounded-full text-xs font-bold transition ${
                                 filterStatus === s
-                                    ? 'bg-slate-900 text-white'
+                                    ? 'bg-slate-900 text-white shadow-sm'
                                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                             }`}
                         >
                             {s === 'all' ? `Todas (${campaigns.length})` :
-                             s === 'under_review' ? `En revisión (${campaigns.filter(c => c.medicalDocumentStatus === s).length})` :
-                             s === 'pending_upload' ? 'Sin documento' :
+                             s === 'under_review' ? `En revisión (${pendingCount})` :
+                             s === 'pending_upload' ? 'Pendientes' :
                              s === 'approved' ? 'Aprobadas' :
-                             s === 'rejected' ? 'Rechazadas' : 'Más info'}
+                             s === 'rejected' ? 'Rechazadas' : 'Más info solicitada'}
                         </button>
                     ))}
                 </div>
             </div>
 
-            {/* Tabla */}
+            {/* Tabla Principal */}
             <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
                 <div className="overflow-x-auto">
                     <table className="w-full text-left">
                         <thead className="bg-gray-50 text-gray-500 text-[11px] uppercase tracking-wider font-bold">
                             <tr>
-                                <th className="px-6 py-4">Campaña / Beneficiario</th>
-                                <th className="px-6 py-4">Categoría</th>
+                                <th className="px-6 py-4">Campaña / Organizador</th>
+                                <th className="px-6 py-4 text-center">🪪 Cédula ID</th>
+                                <th className="px-6 py-4 text-center">🏦 Cert. Bancario</th>
+                                <th className="px-6 py-4 text-center">📜 Carta Poder</th>
+                                <th className="px-6 py-4 text-center">⚕️ Doc. Médico</th>
                                 <th className="px-6 py-4 text-center">Recaudado</th>
-                                <th className="px-6 py-4 text-center">Estado Doc. Médico</th>
-                                <th className="px-6 py-4 text-center">Fecha de carga</th>
-                                <th className="px-6 py-4 text-right">Acciones</th>
+                                <th className="px-6 py-4 text-right">Acciones de Auditoría</th>
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-gray-100">
                             {filtered.length === 0 && (
-                                <tr><td colSpan={6} className="px-6 py-12 text-center text-gray-400 text-sm">No hay campañas en esta categoría.</td></tr>
+                                <tr><td colSpan={7} className="px-6 py-12 text-center text-gray-400 text-sm">No hay campañas en este filtro.</td></tr>
                             )}
                             {filtered.map(camp => (
                                 <tr key={camp.id} className="hover:bg-gray-50/50 transition-colors">
+                                    {/* Campaña */}
                                     <td className="px-6 py-4">
-                                        <div className="max-w-[220px]">
+                                        <div className="max-w-[200px]">
                                             <p className="text-sm font-bold text-gray-900 truncate">{camp.title}</p>
-                                            <p className="text-xs text-gray-500 truncate">{camp.organizer?.email}</p>
-                                            <p className="text-xs text-gray-400 truncate">Beneficiario: {camp.beneficiary === 'myself' ? 'Yo mismo' : camp.beneficiary}</p>
+                                            <p className="text-xs text-gray-500 truncate">{camp.organizer?.email || camp.userId}</p>
+                                            <span className="inline-block mt-1 px-2 py-0.5 bg-blue-50 text-blue-700 rounded text-[10px] font-bold">
+                                                {camp.category || 'General'}
+                                            </span>
                                         </div>
                                     </td>
-                                    <td className="px-6 py-4">
-                                        <span className="inline-flex items-center px-2 py-1 bg-blue-50 text-blue-700 rounded-lg text-xs font-bold">
-                                            <Stethoscope className="w-3 h-3 mr-1" />{camp.category}
-                                        </span>
+
+                                    {/* 1. Cédula */}
+                                    <td className="px-6 py-4 text-center">
+                                        <div className="flex flex-col items-center gap-1">
+                                            {docBadge(camp.idDocumentStatus)}
+                                            {camp.idDocumentUrl ? (
+                                                <button
+                                                    onClick={() => setDocViewModal({ url: camp.idDocumentUrl, title: `Cédula de Identidad - ${camp.title}` })}
+                                                    className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 hover:underline bg-blue-50 px-2 py-0.5 rounded"
+                                                >
+                                                    <Eye className="w-3 h-3" /> Ver
+                                                </button>
+                                            ) : (
+                                                <span className="text-[10px] text-gray-300 italic">No subido</span>
+                                            )}
+                                        </div>
                                     </td>
+
+                                    {/* 2. Certificado Bancario */}
+                                    <td className="px-6 py-4 text-center">
+                                        <div className="flex flex-col items-center gap-1">
+                                            {docBadge(camp.bankCertificateStatus)}
+                                            {camp.bankCertificateUrl ? (
+                                                <button
+                                                    onClick={() => setDocViewModal({ url: camp.bankCertificateUrl, title: `Certificado Bancario - ${camp.title}` })}
+                                                    className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 hover:underline bg-emerald-50 px-2 py-0.5 rounded"
+                                                >
+                                                    <Eye className="w-3 h-3" /> Ver
+                                                </button>
+                                            ) : (
+                                                <span className="text-[10px] text-gray-300 italic">No subido</span>
+                                            )}
+                                        </div>
+                                    </td>
+
+                                    {/* 3. Carta Autorización */}
+                                    <td className="px-6 py-4 text-center">
+                                        <div className="flex flex-col items-center gap-1">
+                                            {camp.beneficiary === 'myself' && !camp.authorizationLetterUrl ? (
+                                                <span className="text-[10px] text-gray-400 bg-gray-100 px-2 py-0.5 rounded">No aplica</span>
+                                            ) : (
+                                                <>
+                                                    {docBadge(camp.authorizationLetterStatus)}
+                                                    {camp.authorizationLetterUrl ? (
+                                                        <button
+                                                            onClick={() => setDocViewModal({ url: camp.authorizationLetterUrl, title: `Carta de Autorización - ${camp.title}` })}
+                                                            className="inline-flex items-center gap-1 text-[11px] font-bold text-amber-700 hover:underline bg-amber-50 px-2 py-0.5 rounded"
+                                                        >
+                                                            <Eye className="w-3 h-3" /> Ver
+                                                        </button>
+                                                    ) : (
+                                                        <span className="text-[10px] text-gray-300 italic">Pendiente</span>
+                                                    )}
+                                                </>
+                                            )}
+                                        </div>
+                                    </td>
+
+                                    {/* 4. Certificado Médico */}
+                                    <td className="px-6 py-4 text-center">
+                                        <div className="flex flex-col items-center gap-1">
+                                            {docBadge(camp.medicalDocumentStatus)}
+                                            {camp.medicalDocumentUrl ? (
+                                                <button
+                                                    onClick={() => setDocViewModal({ url: camp.medicalDocumentUrl, title: `Certificado Médico - ${camp.title}` })}
+                                                    className="inline-flex items-center gap-1 text-[11px] font-bold text-red-700 hover:underline bg-red-50 px-2 py-0.5 rounded"
+                                                >
+                                                    <Eye className="w-3 h-3" /> Ver
+                                                </button>
+                                            ) : (
+                                                <span className="text-[10px] text-gray-300 italic">No adjunto</span>
+                                            )}
+                                        </div>
+                                    </td>
+
+                                    {/* Recaudado */}
                                     <td className="px-6 py-4 text-center font-black text-slate-800">
                                         ${(camp.currentAmount ?? 0).toLocaleString()}
                                         <p className="text-xs text-gray-400 font-normal">de ${(camp.goal ?? 0).toLocaleString()}</p>
                                     </td>
-                                    <td className="px-6 py-4 text-center">
-                                        {statusBadge(camp.medicalDocumentStatus ?? 'pending_upload')}
-                                        {camp.medicalAdminNote && (
-                                            <p className="text-xs text-gray-400 mt-1 max-w-[150px] truncate italic" title={camp.medicalAdminNote}>
-                                                Nota: {camp.medicalAdminNote}
-                                            </p>
-                                        )}
-                                    </td>
-                                    <td className="px-6 py-4 text-center text-xs text-gray-500">
-                                        {camp.medicalDocumentUploadedAt
-                                            ? new Date(camp.medicalDocumentUploadedAt.seconds * 1000).toLocaleDateString('es-EC', { day:'2-digit', month:'short', year:'numeric' })
-                                            : <span className="text-gray-300 italic">Sin documento</span>}
-                                    </td>
+
+                                    {/* Acciones */}
                                     <td className="px-6 py-4">
                                         <div className="flex items-center justify-end gap-1 flex-wrap">
-                                            {/* Ver documento */}
-                                            {camp.medicalDocumentUrl && (
+                                            {/* Respaldo adicional si existe */}
+                                            {camp.additionalVerificationDocUrl && (
                                                 <button
-                                                    onClick={() => setDocViewUrl(camp.medicalDocumentUrl)}
-                                                    className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition"
-                                                    title="Ver documento médico"
+                                                    onClick={() => setDocViewModal({ url: camp.additionalVerificationDocUrl, title: `Respaldo Adicional - ${camp.title}` })}
+                                                    className="p-2 text-purple-600 hover:bg-purple-50 rounded-lg transition"
+                                                    title="Ver respaldos adicionales"
                                                 >
-                                                    <Eye className="w-5 h-5" />
+                                                    <Download className="w-4 h-4" />
                                                 </button>
                                             )}
-                                            {/* Ver log */}
+
+                                            {/* Botón Auditoría: Aprobar */}
+                                            <button
+                                                onClick={() => openActionModal(camp, 'all', 'approved')}
+                                                className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition"
+                                                title="Aprobar documentación"
+                                            >
+                                                <ShieldCheck className="w-5 h-5" />
+                                            </button>
+
+                                            {/* Botón Auditoría: Solicitar Corrección */}
+                                            <button
+                                                onClick={() => openActionModal(camp, 'all', 'more_info_required')}
+                                                className="p-2 text-purple-600 hover:bg-purple-50 rounded-lg transition"
+                                                title="Solicitar corrección o más info"
+                                            >
+                                                <MessageSquare className="w-5 h-5" />
+                                            </button>
+
+                                            {/* Botón Auditoría: Rechazar */}
+                                            <button
+                                                onClick={() => openActionModal(camp, 'all', 'rejected')}
+                                                className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition"
+                                                title="Rechazar documentos"
+                                            >
+                                                <XCircle className="w-5 h-5" />
+                                            </button>
+
+                                            {/* Historial Log */}
                                             <button
                                                 onClick={() => openLog(camp)}
                                                 className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition"
@@ -1264,35 +1415,10 @@ const MedicalVerificationView = () => {
                                             >
                                                 <History className="w-5 h-5" />
                                             </button>
-                                            {/* Acciones de revisión */}
-                                            {camp.medicalDocumentStatus === 'under_review' && (
-                                                <>
-                                                    <button
-                                                        onClick={() => openActionModal(camp, 'approved')}
-                                                        className="p-2 text-green-600 hover:bg-green-50 rounded-lg transition"
-                                                        title="Aprobar"
-                                                    >
-                                                        <ShieldCheck className="w-5 h-5" />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => openActionModal(camp, 'more_info_required')}
-                                                        className="p-2 text-purple-600 hover:bg-purple-50 rounded-lg transition"
-                                                        title="Solicitar más documentación"
-                                                    >
-                                                        <MessageSquare className="w-5 h-5" />
-                                                    </button>
-                                                    <button
-                                                        onClick={() => openActionModal(camp, 'rejected')}
-                                                        className="p-2 text-red-500 hover:bg-red-50 rounded-lg transition"
-                                                        title="Rechazar"
-                                                    >
-                                                        <XCircle className="w-5 h-5" />
-                                                    </button>
-                                                </>
-                                            )}
-                                            {/* Enviar mensaje directo al creador */}
+
+                                            {/* Mensaje directo */}
                                             <SendMessageButton
-                                                userId={camp.organizerId || ''}
+                                                userId={camp.organizerId || camp.userId || (camp.organizer as any)?.uid || camp.organizer?.email || ''}
                                                 userEmail={camp.organizer?.email || ''}
                                                 userName={camp.organizer?.name || camp.organizer?.email || 'Creador'}
                                                 campaignId={camp.id}
@@ -1301,12 +1427,13 @@ const MedicalVerificationView = () => {
                                                 buttonLabel=""
                                                 buttonClass="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition"
                                             />
-                                            {/* Ver en sitio */}
+
+                                            {/* Ver campaña */}
                                             <Link
                                                 to={`/campaign/${camp.id}`}
                                                 target="_blank"
                                                 className="p-2 text-gray-400 hover:bg-gray-100 rounded-lg transition"
-                                                title="Ver campaña"
+                                                title="Ver campaña en vivo"
                                             >
                                                 <FileText className="w-5 h-5" />
                                             </Link>
@@ -1319,81 +1446,123 @@ const MedicalVerificationView = () => {
                 </div>
             </div>
 
-            {/* Modal: Acción (Aprobar / Rechazar / Más info) */}
-            {actionModal && (() => {
-                const { title, color, btnClass, icon } = actionLabel(actionModal.action);
-                const needsNote = actionModal.action !== 'approved';
-                return (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-                        <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl">
-                            <div className={`p-6 rounded-t-2xl border ${color}`}>
-                                <div className="flex items-center justify-between">
-                                    <h2 className="font-bold text-lg flex items-center">{icon}{title}</h2>
-                                    <button onClick={() => setActionModal(null)} className="p-1 hover:bg-black/10 rounded-full"><X className="w-5 h-5" /></button>
-                                </div>
-                                <p className="text-sm mt-2 font-medium">{actionModal.campaign.title}</p>
+            {/* Modal: Acción de Auditoría (Aprobar / Rechazar / Solicitar corrección) */}
+            {actionModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+                    <div className="bg-white rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+                        <div className={`p-6 border-b ${
+                            actionModal.action === 'approved' ? 'bg-emerald-50 border-emerald-200 text-emerald-900' :
+                            actionModal.action === 'rejected' ? 'bg-red-50 border-red-200 text-red-900' :
+                            'bg-purple-50 border-purple-200 text-purple-900'
+                        }`}>
+                            <div className="flex items-center justify-between">
+                                <h2 className="font-black text-lg flex items-center gap-2">
+                                    {actionModal.action === 'approved' && <ShieldCheck className="w-6 h-6 text-emerald-600" />}
+                                    {actionModal.action === 'rejected' && <XCircle className="w-6 h-6 text-red-600" />}
+                                    {actionModal.action === 'more_info_required' && <MessageSquare className="w-6 h-6 text-purple-600" />}
+                                    {actionModal.action === 'approved' ? 'Aprobar Documentación' :
+                                     actionModal.action === 'rejected' ? 'Rechazar Documentos' :
+                                     'Solicitar Información Adicional'}
+                                </h2>
+                                <button onClick={() => setActionModal(null)} className="p-1 hover:bg-black/10 rounded-full"><X className="w-5 h-5" /></button>
                             </div>
-                            <div className="p-6 space-y-4">
-                                <div className="space-y-2">
-                                    <label className={`text-sm font-bold text-gray-700 ${needsNote ? '' : 'opacity-60'}`}>
-                                        {actionModal.action === 'more_info_required'
-                                            ? '📄 Indica qué documentación adicional se requiere (obligatorio)'
+                            <p className="text-xs font-semibold mt-1 opacity-80">{actionModal.campaign.title}</p>
+                        </div>
+
+                        <div className="p-6 space-y-4">
+                            {/* Seleccionar qué documento auditar */}
+                            <div className="space-y-1">
+                                <label className="text-xs font-bold text-gray-700">Documento a dictaminar:</label>
+                                <select
+                                    value={selectedDocType}
+                                    onChange={e => setSelectedDocType(e.target.value as any)}
+                                    className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs font-bold text-gray-800 outline-none focus:ring-2 focus:ring-primary/20"
+                                >
+                                    <option value="all">⚡ Todos los documentos de la campaña</option>
+                                    <option value="id_card">🪪 Cédula de Identidad</option>
+                                    <option value="bank_certificate">🏦 Certificado Bancario Oficial</option>
+                                    <option value="authorization_letter">📜 Carta de Autorización / Poder</option>
+                                    <option value="medical">⚕️ Certificado Médico / Epicrisis</option>
+                                </select>
+                            </div>
+
+                            {/* Campo de nota o motivo */}
+                            <div className="space-y-1.5">
+                                <label className="text-xs font-bold text-gray-700">
+                                    {actionModal.action === 'more_info_required'
+                                        ? '📄 Indica con claridad qué documento o dato falta (obligatorio):'
+                                        : actionModal.action === 'rejected'
+                                            ? '❌ Motivo del rechazo notificado al usuario (obligatorio):'
+                                            : '✅ Observación interna o felicitación (opcional):'}
+                                </label>
+                                <textarea
+                                    rows={4}
+                                    required={actionModal.action !== 'approved'}
+                                    className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none text-xs"
+                                    placeholder={
+                                        actionModal.action === 'more_info_required'
+                                            ? 'Ej: El certificado bancario debe tener fecha menor a 30 días y contener el número de cédula visible...'
                                             : actionModal.action === 'rejected'
-                                                ? '❌ Motivo del rechazo (obligatorio)'
-                                                : '✅ Nota interna (opcional)'}
-                                    </label>
-                                    <textarea
-                                        rows={4}
-                                        required={needsNote}
-                                        className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary resize-none text-sm"
-                                        placeholder={actionModal.action === 'more_info_required'
-                                            ? 'Ej: Por favor suba las facturas médicas y el presupuesto de cirugía...'
-                                            : actionModal.action === 'rejected'
-                                                ? 'Ej: El documento no es legible, no incluye firma del médico...'
-                                                : 'Nota interna sobre la aprobación...'}
-                                        value={adminNote}
-                                        onChange={e => setAdminNote(e.target.value)}
-                                    />
-                                </div>
-                                <div className="flex gap-3">
-                                    <button
-                                        onClick={() => setActionModal(null)}
-                                        className="flex-1 py-3 border border-gray-200 rounded-xl text-sm font-bold text-gray-700 hover:bg-gray-50 transition"
-                                    >
-                                        Cancelar
-                                    </button>
-                                    <button
-                                        onClick={handleSubmitAction}
-                                        disabled={submitting || (needsNote && !adminNote.trim())}
-                                        className={`flex-1 py-3 text-white rounded-xl text-sm font-bold transition ${btnClass} disabled:opacity-40 flex items-center justify-center`}
-                                    >
-                                        {submitting ? <RefreshCw className="w-4 h-4 animate-spin" /> : 'Confirmar'}
-                                    </button>
-                                </div>
+                                                ? 'Ej: La foto de la cédula no es legible en el reverso, por favor tomar una foto clara...'
+                                                : 'Documentos validados y cotejados con el titular...'
+                                    }
+                                    value={adminNote}
+                                    onChange={e => setAdminNote(e.target.value)}
+                                />
+                            </div>
+
+                            <div className="flex gap-3 pt-2">
+                                <button
+                                    onClick={() => setActionModal(null)}
+                                    className="flex-1 py-2.5 border border-gray-200 rounded-xl text-xs font-bold text-gray-700 hover:bg-gray-50 transition"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    onClick={handleSubmitAction}
+                                    disabled={submitting || (actionModal.action !== 'approved' && !adminNote.trim())}
+                                    className={`flex-1 py-2.5 text-white rounded-xl text-xs font-black transition shadow flex items-center justify-center gap-1.5 disabled:opacity-40 ${
+                                        actionModal.action === 'approved' ? 'bg-emerald-600 hover:bg-emerald-700' :
+                                        actionModal.action === 'rejected' ? 'bg-red-600 hover:bg-red-700' :
+                                        'bg-purple-600 hover:bg-purple-700'
+                                    }`}
+                                >
+                                    {submitting ? <RefreshCw className="w-4 h-4 animate-spin" /> : 'Confirmar Dictamen'}
+                                </button>
                             </div>
                         </div>
                     </div>
-                );
-            })()}
+                </div>
+            )}
 
-            {/* Modal: Ver documento */}
-            {docViewUrl && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={() => setDocViewUrl(null)}>
-                    <div className="bg-white rounded-2xl overflow-hidden shadow-2xl max-w-3xl w-full max-h-[90vh]" onClick={e => e.stopPropagation()}>
-                        <div className="p-4 border-b flex items-center justify-between">
-                            <h2 className="font-bold text-gray-900 flex items-center"><FileText className="w-5 h-5 mr-2 text-blue-600" /> Documento Médico</h2>
-                            <div className="flex gap-2">
-                                <a href={docViewUrl} download target="_blank" rel="noreferrer"
-                                    className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition" title="Descargar">
-                                    <Download className="w-5 h-5" />
+            {/* Modal: Ver documento (Iframe / Imagen) */}
+            {docViewModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={() => setDocViewModal(null)}>
+                    <div className="bg-white rounded-2xl overflow-hidden shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+                        <div className="p-4 border-b flex items-center justify-between bg-slate-900 text-white">
+                            <h2 className="font-bold text-sm flex items-center truncate max-w-[80%]">
+                                <FileText className="w-4 h-4 mr-2 text-blue-400 flex-shrink-0" />
+                                <span className="truncate">{docViewModal.title}</span>
+                            </h2>
+                            <div className="flex items-center gap-2">
+                                <a
+                                    href={docViewModal.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="p-1.5 text-slate-300 hover:text-white hover:bg-white/10 rounded-lg text-xs font-bold flex items-center gap-1 transition"
+                                    title="Abrir en pestaña nueva"
+                                >
+                                    <Download className="w-4 h-4" /> Abrir Original
                                 </a>
-                                <button onClick={() => setDocViewUrl(null)} className="p-2 hover:bg-gray-100 rounded-full"><X className="w-5 h-5" /></button>
+                                <button onClick={() => setDocViewModal(null)} className="p-1.5 hover:bg-white/10 rounded-full"><X className="w-5 h-5" /></button>
                             </div>
                         </div>
-                        <div className="overflow-auto max-h-[75vh] flex items-center justify-center p-4 bg-gray-50">
-                            {docViewUrl.match(/\.(jpg|jpeg|png|gif|webp)$/i)
-                                ? <img src={docViewUrl} alt="Documento médico" className="max-w-full max-h-[70vh] object-contain rounded-lg shadow" />
-                                : <iframe src={docViewUrl} className="w-full h-[65vh] rounded-lg border" title="Documento PDF" />}
+                        <div className="overflow-auto flex-1 p-4 bg-slate-100 flex items-center justify-center min-h-[400px]">
+                            {docViewModal.url.match(/\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i) ? (
+                                <img src={docViewModal.url} alt="Documento adjunto" className="max-w-full max-h-[75vh] object-contain rounded-xl shadow-lg" />
+                            ) : (
+                                <iframe src={docViewModal.url} className="w-full h-[75vh] rounded-xl border bg-white shadow-sm" title="Visor de Documento" />
+                            )}
                         </div>
                     </div>
                 </div>
@@ -1402,39 +1571,40 @@ const MedicalVerificationView = () => {
             {/* Modal: Log de auditoría */}
             {logModal && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-                    <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl">
-                        <div className="p-6 border-b flex items-center justify-between">
-                            <h2 className="font-bold text-gray-900 flex items-center">
-                                <History className="w-5 h-5 mr-2 text-gray-600" /> Historial de Auditoría
+                    <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[80vh] flex flex-col shadow-2xl overflow-hidden">
+                        <div className="p-5 border-b flex items-center justify-between bg-slate-900 text-white">
+                            <h2 className="font-bold text-sm flex items-center">
+                                <History className="w-4 h-4 mr-2 text-blue-400" /> Historial de Auditoría de Documentos
                             </h2>
-                            <button onClick={() => setLogModal(null)} className="p-2 hover:bg-gray-100 rounded-full"><X className="w-5 h-5" /></button>
+                            <button onClick={() => setLogModal(null)} className="p-1.5 hover:bg-white/10 rounded-full"><X className="w-5 h-5" /></button>
                         </div>
-                        <p className="px-6 pt-3 text-sm font-bold text-gray-700">{logModal.campaign.title}</p>
+                        <p className="px-6 pt-3 text-xs font-bold text-gray-700">{logModal.campaign.title}</p>
                         <div className="flex-1 overflow-y-auto p-6 space-y-3">
                             {loadingLog && <div className="text-center py-8"><RefreshCw className="animate-spin text-primary mx-auto" /></div>}
                             {!loadingLog && logModal.logs.length === 0 && (
                                 <p className="text-center text-gray-400 text-sm py-8">Sin registros de auditoría aún.</p>
                             )}
                             {logModal.logs.map((log, i) => (
-                                <div key={log.id ?? i} className="flex gap-3 p-3 bg-gray-50 rounded-xl">
+                                <div key={log.id ?? i} className="flex gap-3 p-3 bg-gray-50 rounded-xl border border-gray-100">
                                     <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 ${
-                                        log.action === 'approved' ? 'bg-green-100' :
-                                        log.action === 'rejected' ? 'bg-red-100' :
-                                        log.action === 'more_info_requested' ? 'bg-purple-100' : 'bg-blue-100'
+                                        log.action === 'approved' ? 'bg-emerald-100 text-emerald-700' :
+                                        log.action === 'rejected' ? 'bg-red-100 text-red-700' :
+                                        log.action === 'more_info_requested' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
                                     }`}>
-                                        {log.action === 'approved' ? <CheckCircle2 className="w-4 h-4 text-green-600" /> :
-                                         log.action === 'rejected' ? <XCircle className="w-4 h-4 text-red-600" /> :
-                                         log.action === 'more_info_requested' ? <MessageSquare className="w-4 h-4 text-purple-600" /> :
-                                         <FileText className="w-4 h-4 text-blue-600" />}
+                                        {log.action === 'approved' ? <CheckCircle2 className="w-4 h-4" /> :
+                                         log.action === 'rejected' ? <XCircle className="w-4 h-4" /> :
+                                         log.action === 'more_info_requested' ? <MessageSquare className="w-4 h-4" /> :
+                                         <FileText className="w-4 h-4" />}
                                     </div>
                                     <div className="flex-1 min-w-0">
                                         <div className="flex items-center justify-between flex-wrap gap-1">
                                             <p className="text-xs font-bold text-gray-900">
-                                                {log.action === 'uploaded' ? 'Documento subido' :
-                                                 log.action === 'resubmitted' ? 'Documento resubido' :
-                                                 log.action === 'approved' ? 'Aprobado por admin' :
-                                                 log.action === 'rejected' ? 'Rechazado por admin' :
-                                                 'Se solicitó más documentación'}
+                                                {log.docType ? (DOC_TYPE_LABELS[log.docType] || log.docType) : 'Documento'}: {' '}
+                                                {log.action === 'uploaded' ? 'Subido por usuario' :
+                                                 log.action === 'resubmitted' ? 'Reenviado corregido' :
+                                                 log.action === 'approved' ? 'Aprobado por Auditoría' :
+                                                 log.action === 'rejected' ? 'Rechazado' :
+                                                 'Se solicitó corrección / más datos'}
                                             </p>
                                             <span className="text-[10px] text-gray-400">
                                                 {log.timestamp?.seconds
@@ -1444,9 +1614,19 @@ const MedicalVerificationView = () => {
                                         </div>
                                         <p className="text-[10px] text-gray-500">
                                             {log.statusBefore} → {log.statusAfter}
-                                            {log.adminId && ` • Admin: ${log.adminId}`}
+                                            {log.adminId && ` • Auditor: ${log.adminId}`}
                                         </p>
-                                        {log.adminNote && <p className="text-xs text-gray-700 mt-1 italic">{log.adminNote}</p>}
+                                        {log.adminNote && <p className="text-xs text-gray-700 mt-1 italic bg-white p-2 rounded-lg border border-gray-100">{log.adminNote}</p>}
+                                        {log.documentUrl && (
+                                            <a
+                                                href={log.documentUrl}
+                                                target="_blank"
+                                                rel="noreferrer"
+                                                className="inline-flex items-center gap-1 text-[10px] text-blue-600 font-bold mt-1 hover:underline"
+                                            >
+                                                <Eye className="w-3 h-3" /> Ver archivo de este registro
+                                            </a>
+                                        )}
                                     </div>
                                 </div>
                             ))}
@@ -1491,6 +1671,11 @@ const AdminMessagesView = () => {
     const [loadingMessages, setLoadingMessages] = useState(false);
     const [replyText, setReplyText] = useState('');
     const [sendingReply, setSendingReply] = useState(false);
+
+    // Edición de mensajes enviados
+    const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+    const [editingText, setEditingText] = useState('');
+    const [savingEdit, setSavingEdit] = useState(false);
 
     // Filtros y búsqueda
     const [searchQuery, setSearchQuery] = useState('');
@@ -1561,7 +1746,8 @@ const AdminMessagesView = () => {
             await sendSystemNotification.newAdminMessage(
                 activeConversation.userId,
                 selectedConvId,
-                activeConversation.subject
+                activeConversation.subject,
+                activeConversation.userEmail
             );
 
             setReplyText('');
@@ -1570,6 +1756,42 @@ const AdminMessagesView = () => {
             alert('Error al enviar la respuesta');
         } finally {
             setSendingReply(false);
+        }
+    };
+
+    const handleStartEdit = (m: Message) => {
+        setEditingMessageId(m.id || null);
+        setEditingText(m.message);
+    };
+
+    const handleCancelEdit = () => {
+        setEditingMessageId(null);
+        setEditingText('');
+    };
+
+    const handleSaveEdit = async (messageId: string, isLastMessage: boolean) => {
+        if (!editingText.trim() || !selectedConvId) return;
+        setSavingEdit(true);
+        try {
+            await editMessage(selectedConvId, messageId, editingText.trim(), isLastMessage);
+            setEditingMessageId(null);
+            setEditingText('');
+        } catch (error) {
+            console.error('Error al editar mensaje:', error);
+            alert('Error al guardar los cambios del mensaje');
+        } finally {
+            setSavingEdit(false);
+        }
+    };
+
+    const handleDeleteMsg = async (messageId: string, isLastMessage: boolean, prevMessageText?: string) => {
+        if (!selectedConvId) return;
+        if (!window.confirm('¿Estás seguro de que deseas eliminar este mensaje?')) return;
+        try {
+            await deleteMessage(selectedConvId, messageId, isLastMessage, prevMessageText);
+        } catch (error) {
+            console.error('Error al eliminar mensaje:', error);
+            alert('Error al eliminar el mensaje');
         }
     };
 
@@ -1612,7 +1834,8 @@ const AdminMessagesView = () => {
             await sendSystemNotification.newAdminMessage(
                 selectedUser.uid,
                 convId,
-                newSubject.trim()
+                newSubject.trim(),
+                selectedUser.email
             );
 
             setIsNewModalOpen(false);
@@ -1956,17 +2179,21 @@ const AdminMessagesView = () => {
                                 )}
 
                                 {!loadingMessages &&
-                                    messages.map((m) => {
+                                    messages.map((m, index) => {
                                         const isAdmin = m.senderType === 'admin';
+                                        const isLastMessage = index === messages.length - 1;
+                                        const isEditing = editingMessageId === m.id;
+                                        const prevMsg = index > 0 ? messages[index - 1] : undefined;
+
                                         return (
                                             <div
                                                 key={m.id}
                                                 className={`flex ${
                                                     isAdmin ? 'justify-end' : 'justify-start'
-                                                }`}
+                                                } group`}
                                             >
                                                 <div
-                                                    className={`max-w-[85%] sm:max-w-[75%] rounded-2xl p-4 shadow-sm ${
+                                                    className={`max-w-[85%] sm:max-w-[75%] rounded-2xl p-4 shadow-sm relative transition-all ${
                                                         isAdmin
                                                             ? 'bg-slate-900 text-white rounded-br-sm'
                                                             : 'bg-white text-gray-900 border border-gray-100 rounded-bl-sm'
@@ -1982,29 +2209,88 @@ const AdminMessagesView = () => {
                                                                 ? 'Administración Unidos'
                                                                 : m.senderName || 'Usuario'}
                                                         </span>
-                                                        <span
-                                                            className={`text-[10px] ${
-                                                                isAdmin ? 'text-gray-400' : 'text-gray-400'
-                                                            }`}
-                                                        >
-                                                            {m.createdAt?.seconds
-                                                                ? new Date(
-                                                                      m.createdAt.seconds * 1000
-                                                                  ).toLocaleString('es-EC', {
-                                                                      hour: '2-digit',
-                                                                      minute: '2-digit',
-                                                                      day: '2-digit',
-                                                                      month: 'short',
-                                                                  })
-                                                                : 'Ahora'}
-                                                        </span>
+                                                        <div className="flex items-center gap-1.5">
+                                                            {m.edited && (
+                                                                <span className={`text-[10px] italic font-normal ${isAdmin ? 'text-blue-300/80' : 'text-gray-400'}`}>
+                                                                    (editado)
+                                                                </span>
+                                                            )}
+                                                            <span
+                                                                className={`text-[10px] ${
+                                                                    isAdmin ? 'text-gray-400' : 'text-gray-400'
+                                                                }`}
+                                                            >
+                                                                {m.createdAt?.seconds
+                                                                    ? new Date(
+                                                                          m.createdAt.seconds * 1000
+                                                                      ).toLocaleString('es-EC', {
+                                                                          hour: '2-digit',
+                                                                          minute: '2-digit',
+                                                                          day: '2-digit',
+                                                                          month: 'short',
+                                                                      })
+                                                                    : 'Ahora'}
+                                                            </span>
+                                                            {isAdmin && !isEditing && (
+                                                                <div className="opacity-80 sm:opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 ml-1 bg-slate-800/80 px-1 py-0.5 rounded-lg border border-slate-700/50">
+                                                                    <button
+                                                                        onClick={() => handleStartEdit(m)}
+                                                                        title="Editar este mensaje"
+                                                                        className="p-1 hover:bg-slate-700 rounded text-slate-300 hover:text-white transition"
+                                                                    >
+                                                                        <Edit3 className="w-3.5 h-3.5" />
+                                                                    </button>
+                                                                    <button
+                                                                        onClick={() => m.id && handleDeleteMsg(m.id, isLastMessage, prevMsg?.message)}
+                                                                        title="Eliminar este mensaje"
+                                                                        className="p-1 hover:bg-slate-700 rounded text-slate-300 hover:text-red-400 transition"
+                                                                    >
+                                                                        <Trash2 className="w-3.5 h-3.5" />
+                                                                    </button>
+                                                                </div>
+                                                            )}
+                                                        </div>
                                                     </div>
 
-                                                    <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                                                        {m.message}
-                                                    </p>
+                                                    {isEditing ? (
+                                                        <div className="mt-2 space-y-2">
+                                                            <textarea
+                                                                value={editingText}
+                                                                onChange={(e) => setEditingText(e.target.value)}
+                                                                rows={4}
+                                                                className="w-full p-3 bg-slate-800 text-white text-sm rounded-xl border border-blue-500/50 outline-none focus:ring-2 focus:ring-blue-500 resize-none font-normal"
+                                                                placeholder="Edita el mensaje..."
+                                                                autoFocus
+                                                            />
+                                                            <div className="flex items-center justify-end gap-2">
+                                                                <button
+                                                                    onClick={handleCancelEdit}
+                                                                    disabled={savingEdit}
+                                                                    className="px-3 py-1.5 text-xs font-bold text-slate-300 hover:text-white hover:bg-slate-800 rounded-lg transition"
+                                                                >
+                                                                    Cancelar
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => m.id && handleSaveEdit(m.id, isLastMessage)}
+                                                                    disabled={savingEdit || !editingText.trim()}
+                                                                    className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 text-white text-xs font-bold rounded-lg transition flex items-center gap-1.5 shadow-md shadow-blue-900/30"
+                                                                >
+                                                                    {savingEdit ? (
+                                                                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                                                    ) : (
+                                                                        <Check className="w-3.5 h-3.5" />
+                                                                    )}
+                                                                    Guardar cambios
+                                                                </button>
+                                                            </div>
+                                                        </div>
+                                                    ) : (
+                                                        <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                                                            {m.message}
+                                                        </p>
+                                                    )}
 
-                                                    {isAdmin && (
+                                                    {isAdmin && !isEditing && (
                                                         <div className="text-right mt-1">
                                                             <span className="text-[10px] text-gray-400">
                                                                 {m.isReadByUser
@@ -2165,9 +2451,15 @@ const AdminMessagesView = () => {
                                 </label>
                                 <select
                                     value={newCategory}
-                                    onChange={(e) =>
-                                        setNewCategory(e.target.value as MessageCategory)
-                                    }
+                                    onChange={(e) => {
+                                        const cat = e.target.value as MessageCategory;
+                                        setNewCategory(cat);
+                                        const tpl = MESSAGE_TEMPLATES[cat];
+                                        if (tpl && !newSubject.trim() && !newBody.trim()) {
+                                            setNewSubject(tpl.subject);
+                                            setNewBody(tpl.message);
+                                        }
+                                    }}
                                     className="w-full p-2.5 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-primary/20"
                                 >
                                     {MESSAGE_CATEGORIES_LIST.map((c) => (
@@ -2176,6 +2468,37 @@ const AdminMessagesView = () => {
                                         </option>
                                     ))}
                                 </select>
+                            </div>
+
+                            {/* Plantillas frecuentes editables */}
+                            <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 mb-2">
+                                    <FileText className="w-3.5 h-3.5 text-blue-600" />
+                                    <span>Cargar plantilla para editar y personalizar:</span>
+                                </div>
+                                <div className="flex flex-wrap gap-1.5">
+                                    {Object.keys(MESSAGE_TEMPLATES).map((catName) => (
+                                        <button
+                                            key={catName}
+                                            type="button"
+                                            onClick={() => {
+                                                const tpl = MESSAGE_TEMPLATES[catName];
+                                                if (tpl) {
+                                                    setNewCategory(catName as MessageCategory);
+                                                    setNewSubject(tpl.subject);
+                                                    setNewBody(tpl.message);
+                                                }
+                                            }}
+                                            className={`text-xs px-2.5 py-1 rounded-lg font-medium transition ${
+                                                newCategory === catName
+                                                    ? 'bg-blue-600 text-white shadow-sm'
+                                                    : 'bg-white text-slate-700 hover:bg-blue-50 border border-slate-200'
+                                            }`}
+                                        >
+                                            {catName}
+                                        </button>
+                                    ))}
+                                </div>
                             </div>
 
                             {/* Asunto */}

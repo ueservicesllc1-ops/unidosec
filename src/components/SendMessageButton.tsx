@@ -1,10 +1,39 @@
-﻿import { useState } from "react";
-import { MessageSquare, X, Send, RefreshCw } from "lucide-react";
+import { useState } from "react";
+import { MessageSquare, X, Send, RefreshCw, FileText } from "lucide-react";
+import { db } from "../firebase";
+import { collection, query, where, getDocs } from "firebase/firestore";
 import {
   createConversation,
   type MessageCategory,
 } from "../services/messagingService";
 import { sendSystemNotification } from "../services/notificationService";
+
+export const MESSAGE_TEMPLATES: Record<string, { subject: string; message: string }> = {
+  "Documentación médica": {
+    subject: "Requerimiento de documentación médica oficial",
+    message: "Estimado/a usuario,\n\nPara continuar con el proceso de verificación de su campaña, solicitamos que adjunte certificados médicos actualizados, epicrisis o presupuestos emitidos por una casa de salud autorizada.\n\nPuede responder a este mensaje directamente.\n\nAtentamente,\nEquipo de Auditoría Unidos EC",
+  },
+  "Verificación bancaria": {
+    subject: "Validación de cuenta bancaria",
+    message: "Estimado/a usuario,\n\nPara validar su cuenta bancaria de destino, requerimos un certificado bancario emitido en los últimos 30 días donde conste el titular y número de cuenta.\n\nQuedamos a su disposición para cualquier duda.\n\nAtentamente,\nAdministración Unidos EC",
+  },
+  "Verificación de identidad": {
+    subject: "Verificación de documento de identidad",
+    message: "Estimado/a usuario,\n\nPara garantizar la seguridad de la plataforma, necesitamos una fotografía clara y legible de su documento de identidad (cédula o pasaporte) por ambos lados.\n\nAtentamente,\nEquipo de Seguridad Unidos EC",
+  },
+  "Retiro de fondos": {
+    subject: "Actualización de su solicitud de retiro",
+    message: "Estimado/a organizador/a,\n\nSu solicitud de retiro ha ingresado a la fase de liquidación y auditoría. Por favor confirme si sus datos bancarios se encuentran activos y a nombre del titular registrado.\n\nAtentamente,\nAdministración Unidos EC",
+  },
+  "Campaña": {
+    subject: "Sugerencias de mejora para su campaña",
+    message: "Estimado/a organizador/a,\n\nLe sugerimos ampliar la descripción y añadir fotografías o respaldos sobre el destino de los fondos solicitados para generar mayor transparencia e impulsar el apoyo de los donantes.\n\nAtentamente,\nEquipo de Campañas Unidos EC",
+  },
+  "Soporte": {
+    subject: "Atención a su solicitud de soporte",
+    message: "Hola,\n\nNos ponemos en contacto contigo para asistirte con tu cuenta o campaña en Unidos EC. Por favor indícanos más detalles sobre tu inquietud para resolverla a la brevedad.\n\nSaludos cordiales,\nSoporte Unidos EC",
+  },
+};
 
 const MESSAGE_CATEGORIES: MessageCategory[] = [
   "Verificación de identidad",
@@ -43,12 +72,26 @@ const SendMessageButton = ({
   onSent,
 }: SendMessageButtonProps) => {
   const [open, setOpen] = useState(false);
+  const initialCategory = (preselectedCategory ?? "Soporte") as MessageCategory;
+  const initialTemplate = MESSAGE_TEMPLATES[initialCategory];
   const [form, setForm] = useState({
-    subject: "",
-    category: (preselectedCategory ?? "Soporte") as MessageCategory,
-    message: "",
+    subject: initialTemplate?.subject || "",
+    category: initialCategory,
+    message: initialTemplate?.message || "",
   });
   const [sending, setSending] = useState(false);
+
+  const applyTemplate = (cat: string) => {
+    const tpl = MESSAGE_TEMPLATES[cat];
+    if (tpl) {
+      setForm((prev) => ({
+        ...prev,
+        category: cat as MessageCategory,
+        subject: tpl.subject,
+        message: tpl.message,
+      }));
+    }
+  };
 
   const handleSend = async () => {
     if (!form.subject.trim() || !form.message.trim()) {
@@ -57,10 +100,30 @@ const SendMessageButton = ({
     }
     setSending(true);
     try {
+      let targetUserId = userId;
+      // Si no tenemos UID o es igual al email, intentamos resolver el UID real del usuario registrado
+      if ((!targetUserId || targetUserId === userEmail) && userEmail) {
+        try {
+          const uq = query(
+            collection(db, "users"),
+            where("email", "==", userEmail.trim().toLowerCase())
+          );
+          const uSnap = await getDocs(uq);
+          if (!uSnap.empty) {
+            targetUserId = uSnap.docs[0].data().uid || uSnap.docs[0].id;
+          }
+        } catch (e) {
+          console.warn("No se pudo obtener el UID del usuario por email:", e);
+        }
+      }
+      if (!targetUserId) {
+        targetUserId = userEmail || "usuario_anonimo";
+      }
+
       const convId = await createConversation({
-        userId,
-        userEmail,
-        userName,
+        userId: targetUserId,
+        userEmail: userEmail || "",
+        userName: userName || "Usuario",
         campaignId,
         campaignTitle,
         subject: form.subject,
@@ -70,7 +133,12 @@ const SendMessageButton = ({
         adminName: "Administración Unidos EC",
       });
 
-      await sendSystemNotification.newAdminMessage(userId, convId, form.subject);
+      await sendSystemNotification.newAdminMessage(
+        targetUserId,
+        convId,
+        form.subject,
+        userEmail
+      );
 
       setOpen(false);
       setForm({ subject: "", category: "Soporte", message: "" });
@@ -136,9 +204,18 @@ const SendMessageButton = ({
                   <select
                     className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-sm"
                     value={form.category}
-                    onChange={(e) =>
-                      setForm({ ...form, category: e.target.value as MessageCategory })
-                    }
+                    onChange={(e) => {
+                      const newCat = e.target.value as MessageCategory;
+                      setForm(prev => {
+                        const tpl = MESSAGE_TEMPLATES[newCat];
+                        return {
+                          ...prev,
+                          category: newCat,
+                          subject: (!prev.subject.trim() && tpl) ? tpl.subject : prev.subject,
+                          message: (!prev.message.trim() && tpl) ? tpl.message : prev.message,
+                        };
+                      });
+                    }}
                   >
                     {MESSAGE_CATEGORIES.map((c) => (
                       <option key={c} value={c}>
@@ -161,8 +238,35 @@ const SendMessageButton = ({
                 </div>
               </div>
 
+              {/* Plantillas sugeridas editables */}
+              <div className="bg-slate-50 p-3 rounded-xl border border-slate-100">
+                <div className="flex items-center gap-1.5 text-xs font-bold text-slate-700 mb-2">
+                  <FileText className="w-3.5 h-3.5 text-blue-600" />
+                  <span>Cargar plantilla editable para redactar:</span>
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.keys(MESSAGE_TEMPLATES).map((catName) => (
+                    <button
+                      key={catName}
+                      type="button"
+                      onClick={() => applyTemplate(catName)}
+                      className={`text-xs px-2.5 py-1 rounded-lg font-medium transition ${
+                        form.category === catName
+                          ? "bg-blue-600 text-white shadow-sm"
+                          : "bg-white text-slate-700 hover:bg-blue-50 border border-slate-200"
+                      }`}
+                    >
+                      {catName}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
               <div className="space-y-1">
-                <label className="text-sm font-bold text-gray-700">Mensaje</label>
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-bold text-gray-700">Mensaje</label>
+                  <span className="text-[11px] text-gray-400">Puedes editar este texto libremente</span>
+                </div>
                 <textarea
                   rows={8}
                   className="w-full p-3 bg-gray-50 border border-gray-200 rounded-xl outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-sm resize-none"

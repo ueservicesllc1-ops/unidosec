@@ -20,7 +20,7 @@ const NotificationBell = () => {
 
   useEffect(() => {
     if (!user) return;
-    const unsub = subscribeToUserNotifications(user.uid, setNotifications);
+    const unsub = subscribeToUserNotifications(user.uid, setNotifications, user.email);
     return () => unsub();
   }, [user]);
 
@@ -48,7 +48,7 @@ const NotificationBell = () => {
   };
 
   const handleMarkAll = async () => {
-    await markAllNotificationsRead(user.uid);
+    await markAllNotificationsRead(user.uid, user.email);
   };
 
   return (

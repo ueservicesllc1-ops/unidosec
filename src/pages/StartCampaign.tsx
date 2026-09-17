@@ -106,12 +106,15 @@ const StartCampaign = () => {
                 beneficiary: formData.beneficiary,
                 videoUrl: formData.videoUrl, // YouTube Link
                 additionalImages: additionalImages, // Gallery URLs
+                userId: user?.uid,
+                organizerId: user?.uid,
                 organizer: {
                     name: formData.organizerName,
                     email: formData.organizerEmail,
                     phone: formData.organizerPhone,
                     city: formData.organizerCity,
-                    address: formData.organizerAddress
+                    address: formData.organizerAddress,
+                    uid: user?.uid
                 },
                 imageUrl: imageUrl
             });

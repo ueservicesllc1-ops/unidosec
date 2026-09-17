@@ -8,7 +8,7 @@ import { QRCodeCanvas } from 'qrcode.react';
 import { getRecentDonations, toggleCampaignLike, type CampaignData, type Donation } from '../services/campaignService';
 import { useAuth } from '../context/AuthContext';
 import { createWithdrawalRequest } from '../services/withdrawalService';
-import { uploadMedicalDocument, canWithdraw, isCampaignRequiringMedicalDoc } from '../services/medicalVerificationService';
+import { uploadVerificationDocument, uploadMedicalDocument, canWithdraw, isCampaignRequiringMedicalDoc, type VerificationDocType } from '../services/medicalVerificationService';
 import PayPalDonationButton from '../components/PayPalDonationButton';
 
 // Helper to extract YouTube ID
@@ -32,11 +32,21 @@ interface Campaign extends CampaignData {
     additionalImages?: string[];
     likesCount?: number;
     likedBy?: string[];
-    // Verificación médica
+    // Verificación de documentos y auditoría
     medicalDocumentRequired?: boolean;
     medicalDocumentStatus?: string;
     medicalDocumentUrl?: string;
     medicalAdminNote?: string;
+    idDocumentUrl?: string;
+    idDocumentStatus?: string;
+    id_cardAdminNote?: string;
+    bankCertificateUrl?: string;
+    bankCertificateStatus?: string;
+    bank_certificateAdminNote?: string;
+    authorizationLetterUrl?: string;
+    authorizationLetterStatus?: string;
+    authorization_letterAdminNote?: string;
+    additionalVerificationDocUrl?: string;
     userId?: string;
 }
 
@@ -52,10 +62,43 @@ const CampaignDetails = () => {
     const [showRequirementsModal, setShowRequirementsModal] = useState(false);
     const [isSubmittingWithdrawal, setIsSubmittingWithdrawal] = useState(false);
 
-    // Estado para verificación médica
-    const [medDocFile, setMedDocFile] = useState<File | null>(null);
-    const [isUploadingMedDoc, setIsUploadingMedDoc] = useState(false);
-    const [medDocUploadSuccess, setMedDocUploadSuccess] = useState(false);
+    // Estado para carga de documentos de verificación
+    const [uploadingDocType, setUploadingDocType] = useState<VerificationDocType | null>(null);
+    const [selectedDocFiles, setSelectedDocFiles] = useState<Record<string, File | null>>({});
+
+    const handleFileUpload = async (docType: VerificationDocType, label: string) => {
+        const file = selectedDocFiles[docType];
+        if (!file) {
+            alert(`Por favor selecciona un archivo para: ${label}`);
+            return;
+        }
+        if (!campaign) return;
+        if (!user) {
+            alert('Debes iniciar sesión con la cuenta creadora de la campaña para subir documentos.');
+            return;
+        }
+
+        // Validación de tamaño (máximo 20MB)
+        const sizeInMB = file.size / (1024 * 1024);
+        if (file.size > 20 * 1024 * 1024) {
+            alert(`El archivo "${file.name}" supera el peso máximo permitido (20MB). Tu archivo pesa ${sizeInMB.toFixed(2)}MB. Por favor comprímelo o elige uno más liviano.`);
+            return;
+        }
+
+        setUploadingDocType(docType);
+        try {
+            await uploadVerificationDocument(campaign.id, file, docType, user.uid);
+            setSelectedDocFiles(prev => ({ ...prev, [docType]: null }));
+            await fetchData();
+            alert(`✅ ${label} subido exitosamente (${sizeInMB.toFixed(2)} MB). Nuestro equipo de auditoría lo revisará a la brevedad.`);
+        } catch (err: any) {
+            console.error('Error subiendo documento:', err);
+            const msg = err?.message || 'Error al subir el documento. Revisa tu conexión a internet o intenta nuevamente.';
+            alert(`❌ No se pudo subir el documento: ${msg}`);
+        } finally {
+            setUploadingDocType(null);
+        }
+    };
 
     const [withdrawalFormData, setWithdrawalFormData] = useState({
         firstName: '',
@@ -162,25 +205,6 @@ const CampaignDetails = () => {
             console.error(error);
         } finally {
             setIsSubmittingWithdrawal(false);
-        }
-    };
-
-    // Subir documento médico
-    const handleMedDocUpload = async () => {
-        if (!medDocFile || !campaign || !user) return;
-        setIsUploadingMedDoc(true);
-        try {
-            await uploadMedicalDocument(campaign.id, medDocFile, user.uid);
-            setMedDocUploadSuccess(true);
-            setMedDocFile(null);
-            // Recargar datos de la campaña para reflejar el nuevo estado
-            await fetchData();
-            alert("✅ Documentación médica enviada exitosamente. Nuestro equipo de auditoría la revisará para habilitar el retiro.");
-        } catch (err) {
-            console.error(err);
-            alert('Error al subir el documento. Por favor intenta nuevamente.');
-        } finally {
-            setIsUploadingMedDoc(false);
         }
     };
 
@@ -584,226 +608,308 @@ const CampaignDetails = () => {
                                 </button>
 
                                 {/* ─────────────────────────────────────────────── */}
-                                {/* ZONA DE RETIRO — multi-estado */}
+                                {/* ZONA DE VERIFICACIÓN Y RETIRO DE FONDOS */}
                                 {/* ─────────────────────────────────────────────── */}
                                 {isOrganizer ? (() => {
                                     const medRequired = isCampaignRequiringMedicalDoc(campaign);
                                     const medStatus = campaign.medicalDocumentStatus ?? (medRequired ? 'pending_upload' : 'not_required');
+                                    const idStatus = campaign.idDocumentStatus ?? 'pending_upload';
+                                    const bankStatus = campaign.bankCertificateStatus ?? 'pending_upload';
+                                    const authLetterStatus = campaign.authorizationLetterStatus ?? 'pending_upload';
                                     const auth = canWithdraw(campaign);
+
+                                    const renderDocBadge = (status?: string, required = true) => {
+                                        if (!required) {
+                                            return <span className="px-2 py-0.5 text-[10px] font-bold rounded-full bg-gray-100 text-gray-500">Opcional</span>;
+                                        }
+                                        switch (status) {
+                                            case 'approved':
+                                                return <span className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-emerald-100 text-emerald-800 flex items-center gap-1"><CheckCircle2 className="w-3.5 h-3.5" /> Aprobado</span>;
+                                            case 'under_review':
+                                                return <span className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-amber-100 text-amber-800 flex items-center gap-1"><Clock className="w-3.5 h-3.5" /> En Revisión</span>;
+                                            case 'rejected':
+                                                return <span className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-red-100 text-red-700 flex items-center gap-1"><X className="w-3.5 h-3.5" /> Rechazado</span>;
+                                            case 'more_info_required':
+                                                return <span className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-purple-100 text-purple-700 flex items-center gap-1"><FileText className="w-3.5 h-3.5" /> Requiere Corrección</span>;
+                                            default:
+                                                return <span className="px-2.5 py-1 text-[11px] font-bold rounded-lg bg-blue-100 text-blue-800 flex items-center gap-1"><AlertTriangle className="w-3.5 h-3.5" /> Pendiente de Carga</span>;
+                                        }
+                                    };
 
                                     return (
                                         <div className="w-full space-y-4 pt-2">
-                                            {/* Panel Informativo de Requisitos de Verificación */}
-                                            <div className="bg-gradient-to-br from-slate-50 to-blue-50/40 border border-blue-100/80 rounded-2xl p-4 shadow-sm">
-                                                <div className="flex items-center justify-between mb-2.5">
+                                            {/* Cabecera del Centro de Verificación */}
+                                            <div className="bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-white rounded-2xl p-5 shadow-lg border border-slate-700">
+                                                <div className="flex items-center justify-between mb-2">
                                                     <div className="flex items-center gap-2">
-                                                        <ShieldAlert className="w-4 h-4 text-blue-600 flex-shrink-0" />
-                                                        <h4 className="text-xs font-black uppercase tracking-wider text-slate-800">
-                                                            Requisitos para Retiro de Fondos
+                                                        <ShieldCheck className="w-5 h-5 text-emerald-400" />
+                                                        <h4 className="text-sm font-black uppercase tracking-wider text-white">
+                                                            Centro de Documentación de Respaldo
                                                         </h4>
                                                     </div>
                                                     <Link
                                                         to="/withdrawal-terms"
-                                                        className="text-[11px] font-bold text-blue-600 hover:text-blue-700 underline flex items-center gap-1"
+                                                        target="_blank"
+                                                        className="text-xs font-bold text-emerald-400 hover:text-emerald-300 underline flex items-center gap-1"
                                                     >
-                                                        Ver Términos <HelpCircle className="w-3 h-3 inline" />
+                                                        Normativa <HelpCircle className="w-3.5 h-3.5 inline" />
                                                     </Link>
                                                 </div>
-
-                                                <div className="grid grid-cols-1 gap-2 text-xs text-slate-600">
-                                                    <div className="flex items-start gap-2 bg-white/70 p-2 rounded-xl border border-slate-100">
-                                                        <FileText className="w-3.5 h-3.5 text-blue-500 flex-shrink-0 mt-0.5" />
-                                                        <div>
-                                                            <span className="font-bold text-slate-800">1. Certificado / Epicrisis Médica:</span>
-                                                            <p className="text-[11px] text-slate-500">Documento oficial con diagnóstico claro, firma, sello y registro médico (antigüedad &le; 60 días).</p>
-                                                        </div>
-                                                    </div>
-                                                    <div className="flex items-start gap-2 bg-white/70 p-2 rounded-xl border border-slate-100">
-                                                        <User className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-0.5" />
-                                                        <div>
-                                                            <span className="font-bold text-slate-800">2. Verificación de Identidad:</span>
-                                                            <p className="text-[11px] text-slate-500">Cédula de ciudadanía o pasaporte vigente del organizador y beneficiario.</p>
-                                                        </div>
-                                                    </div>
-                                                    <div className="flex items-start gap-2 bg-white/70 p-2 rounded-xl border border-slate-100">
-                                                        <Landmark className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
-                                                        <div>
-                                                            <span className="font-bold text-slate-800">3. Certificado Bancario Oficial:</span>
-                                                            <p className="text-[11px] text-slate-500">Emitido por banco o cooperativa regulada a nombre del solicitante (antigüedad &le; 30 días).</p>
-                                                        </div>
-                                                    </div>
-                                                </div>
+                                                <p className="text-xs text-slate-300 leading-relaxed">
+                                                    Para habilitar el desembolso de los fondos recaudados, adjunta los documentos oficiales requeridos (Cédula, Certificado Bancario y respaldo médico/autorizaciones). Límite de <strong>20 MB</strong> por archivo (PDF, JPG, PNG).
+                                                </p>
                                             </div>
 
-                                            {/* ─ A: DOC MÉDICO REQUERIDO Y NO SUBIDO ─ */}
-                                            {medRequired && (medStatus === 'pending_upload' || medStatus === 'uploaded') && (
-                                                <div className="w-full bg-blue-50 border-2 border-blue-200 rounded-2xl p-4 space-y-3 shadow-sm">
-                                                    <div className="flex items-start space-x-3">
-                                                        <div className="w-9 h-9 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center flex-shrink-0 font-bold text-lg">
-                                                            ⚕️
+                                            {/* ── 1. CÉDULA DE IDENTIDAD ── */}
+                                            <div className="bg-white border-2 border-slate-200 rounded-2xl p-4 space-y-3 shadow-sm hover:border-blue-300 transition">
+                                                <div className="flex items-start justify-between gap-2">
+                                                    <div className="flex items-start gap-2.5">
+                                                        <div className="w-8 h-8 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center flex-shrink-0 font-bold">
+                                                            🪪
                                                         </div>
                                                         <div>
-                                                            <p className="font-black text-blue-950 text-sm">Verificación Médica Obligatoria Requerida</p>
-                                                            <p className="text-xs text-blue-800 mt-1 leading-relaxed">
-                                                                Para solicitar el retiro de fondos de esta campaña de salud, debes adjuntar el <strong>certificado médico o epicrisis oficial</strong>. El retiro permanecerá bloqueado hasta su aprobación por el equipo de auditoría.
-                                                            </p>
+                                                            <h5 className="text-xs font-black text-slate-900 uppercase">1. Cédula de Identidad o Pasaporte</h5>
+                                                            <p className="text-[11px] text-slate-500">Copia nítida o foto por ambos lados del organizador y beneficiario.</p>
                                                         </div>
                                                     </div>
+                                                    {renderDocBadge(idStatus, true)}
+                                                </div>
 
-                                                    <div className="bg-white p-3 rounded-xl border border-blue-100 space-y-2">
-                                                        <label className="block">
-                                                            <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5 mb-1.5">
-                                                                <FileText className="w-3.5 h-3.5 text-blue-600" /> Adjuntar documento (PDF, JPG, PNG - máx 10MB)
-                                                            </span>
-                                                            <input
-                                                                type="file"
-                                                                accept=".pdf,.jpg,.jpeg,.png"
-                                                                className="block w-full text-xs text-slate-600 file:mr-3 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-blue-600 file:text-white hover:file:bg-blue-700 cursor-pointer border border-dashed border-blue-200 rounded-xl p-2 bg-blue-50/50"
-                                                                onChange={e => setMedDocFile(e.target.files?.[0] ?? null)}
-                                                            />
-                                                        </label>
+                                                {campaign.id_cardAdminNote && (
+                                                    <div className="bg-red-50 p-2.5 rounded-xl border border-red-200 text-xs text-red-800">
+                                                        <strong>Nota de auditoría:</strong> {campaign.id_cardAdminNote}
                                                     </div>
+                                                )}
 
-                                                    {medDocFile && (
+                                                <div className="flex flex-col sm:flex-row gap-2 items-center">
+                                                    <input
+                                                        type="file"
+                                                        accept=".pdf,.jpg,.jpeg,.png,.webp"
+                                                        className="block w-full text-xs text-slate-600 file:mr-2 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-blue-600 file:text-white hover:file:bg-blue-700 cursor-pointer border border-dashed border-slate-200 rounded-xl p-1.5 bg-slate-50"
+                                                        onChange={e => setSelectedDocFiles(prev => ({ ...prev, id_card: e.target.files?.[0] ?? null }))}
+                                                    />
+                                                    {selectedDocFiles.id_card && (
                                                         <button
-                                                            onClick={handleMedDocUpload}
-                                                            disabled={isUploadingMedDoc}
-                                                            className="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-black py-3 rounded-xl transition shadow-md disabled:opacity-50 flex items-center justify-center gap-2"
+                                                            onClick={() => handleFileUpload('id_card', 'Cédula de Identidad')}
+                                                            disabled={uploadingDocType === 'id_card'}
+                                                            className="w-full sm:w-auto whitespace-nowrap bg-blue-600 hover:bg-blue-700 text-white text-xs font-black py-2 px-4 rounded-xl transition shadow disabled:opacity-50 flex items-center justify-center gap-1.5"
                                                         >
-                                                            {isUploadingMedDoc ? (
-                                                                <><span className="animate-spin">⏳</span> Subiendo documento para revisión...</>
-                                                            ) : (
-                                                                <>📤 Enviar Documento a Auditoría</>
-                                                            )}
+                                                            {uploadingDocType === 'id_card' ? '⏳ Subiendo...' : '📤 Subir Cédula'}
                                                         </button>
                                                     )}
+                                                </div>
 
-                                                    {medDocUploadSuccess && (
-                                                        <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-xl text-center">
-                                                            <p className="text-xs text-emerald-800 font-bold">✅ Documento enviado con éxito — en revisión por auditoría</p>
+                                                {campaign.idDocumentUrl && (
+                                                    <a
+                                                        href={campaign.idDocumentUrl}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="inline-flex items-center gap-1 text-xs text-blue-600 font-bold hover:underline"
+                                                    >
+                                                        <FileText className="w-3.5 h-3.5" /> Ver cédula adjunta actualmente ↗
+                                                    </a>
+                                                )}
+                                            </div>
+
+                                            {/* ── 2. CERTIFICADO BANCARIO OFICIAL ── */}
+                                            <div className="bg-white border-2 border-slate-200 rounded-2xl p-4 space-y-3 shadow-sm hover:border-emerald-300 transition">
+                                                <div className="flex items-start justify-between gap-2">
+                                                    <div className="flex items-start gap-2.5">
+                                                        <div className="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center flex-shrink-0 font-bold">
+                                                            🏦
                                                         </div>
+                                                        <div>
+                                                            <h5 className="text-xs font-black text-slate-900 uppercase">2. Certificado Bancario Oficial</h5>
+                                                            <p className="text-[11px] text-slate-500">Emitido por banco o cooperativa regulada (vigencia &le; 30 días).</p>
+                                                        </div>
+                                                    </div>
+                                                    {renderDocBadge(bankStatus, true)}
+                                                </div>
+
+                                                {campaign.bank_certificateAdminNote && (
+                                                    <div className="bg-red-50 p-2.5 rounded-xl border border-red-200 text-xs text-red-800">
+                                                        <strong>Nota de auditoría:</strong> {campaign.bank_certificateAdminNote}
+                                                    </div>
+                                                )}
+
+                                                <div className="flex flex-col sm:flex-row gap-2 items-center">
+                                                    <input
+                                                        type="file"
+                                                        accept=".pdf,.jpg,.jpeg,.png,.webp"
+                                                        className="block w-full text-xs text-slate-600 file:mr-2 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 cursor-pointer border border-dashed border-slate-200 rounded-xl p-1.5 bg-slate-50"
+                                                        onChange={e => setSelectedDocFiles(prev => ({ ...prev, bank_certificate: e.target.files?.[0] ?? null }))}
+                                                    />
+                                                    {selectedDocFiles.bank_certificate && (
+                                                        <button
+                                                            onClick={() => handleFileUpload('bank_certificate', 'Certificado Bancario')}
+                                                            disabled={uploadingDocType === 'bank_certificate'}
+                                                            className="w-full sm:w-auto whitespace-nowrap bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black py-2 px-4 rounded-xl transition shadow disabled:opacity-50 flex items-center justify-center gap-1.5"
+                                                        >
+                                                            {uploadingDocType === 'bank_certificate' ? '⏳ Subiendo...' : '📤 Subir Certificado'}
+                                                        </button>
                                                     )}
                                                 </div>
-                                            )}
 
-                                            {/* ─ B: DOC EN REVISIÓN ─ */}
-                                            {medRequired && medStatus === 'under_review' && (
-                                                <div className="w-full bg-amber-50 border-2 border-amber-200 rounded-2xl p-4 shadow-sm">
-                                                    <div className="flex items-start space-x-3">
-                                                        <div className="w-9 h-9 rounded-xl bg-amber-100 text-amber-700 flex items-center justify-center flex-shrink-0 text-lg">
-                                                            ⏳
+                                                {campaign.bankCertificateUrl && (
+                                                    <a
+                                                        href={campaign.bankCertificateUrl}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="inline-flex items-center gap-1 text-xs text-emerald-700 font-bold hover:underline"
+                                                    >
+                                                        <FileText className="w-3.5 h-3.5" /> Ver certificado bancario adjunto ↗
+                                                    </a>
+                                                )}
+                                            </div>
+
+                                            {/* ── 3. CARTA DE AUTORIZACIÓN O PODER NOTARIADO ── */}
+                                            <div className="bg-white border-2 border-slate-200 rounded-2xl p-4 space-y-3 shadow-sm hover:border-amber-300 transition">
+                                                <div className="flex items-start justify-between gap-2">
+                                                    <div className="flex items-start gap-2.5">
+                                                        <div className="w-8 h-8 rounded-xl bg-amber-50 text-amber-700 flex items-center justify-center flex-shrink-0 font-bold">
+                                                            📜
                                                         </div>
-                                                        <div className="space-y-1.5">
-                                                            <p className="font-black text-amber-950 text-sm">🔒 Retiro Bloqueado: Documentación en Revisión</p>
-                                                            <p className="text-xs text-amber-900 leading-relaxed">
-                                                                Tu certificación médica fue recibida correctamente y está siendo evaluada por nuestro equipo de auditoría médica y seguridad.
-                                                            </p>
-                                                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-amber-100 text-amber-800 rounded-lg text-[11px] font-bold mt-1">
-                                                                <span>Estado actual:</span> <strong>⏳ En Proceso de Auditoría</strong>
+                                                        <div>
+                                                            <h5 className="text-xs font-black text-slate-900 uppercase">3. Carta de Autorización / Poder</h5>
+                                                            <p className="text-[11px] text-slate-500">Obligatorio si el beneficiario o titular de cuenta es un familiar o tercero.</p>
+                                                        </div>
+                                                    </div>
+                                                    {renderDocBadge(authLetterStatus, campaign.beneficiary !== 'myself')}
+                                                </div>
+
+                                                {campaign.authorization_letterAdminNote && (
+                                                    <div className="bg-red-50 p-2.5 rounded-xl border border-red-200 text-xs text-red-800">
+                                                        <strong>Nota de auditoría:</strong> {campaign.authorization_letterAdminNote}
+                                                    </div>
+                                                )}
+
+                                                <div className="flex flex-col sm:flex-row gap-2 items-center">
+                                                    <input
+                                                        type="file"
+                                                        accept=".pdf,.jpg,.jpeg,.png,.webp"
+                                                        className="block w-full text-xs text-slate-600 file:mr-2 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-amber-600 file:text-white hover:file:bg-amber-700 cursor-pointer border border-dashed border-slate-200 rounded-xl p-1.5 bg-slate-50"
+                                                        onChange={e => setSelectedDocFiles(prev => ({ ...prev, authorization_letter: e.target.files?.[0] ?? null }))}
+                                                    />
+                                                    {selectedDocFiles.authorization_letter && (
+                                                        <button
+                                                            onClick={() => handleFileUpload('authorization_letter', 'Carta de Autorización')}
+                                                            disabled={uploadingDocType === 'authorization_letter'}
+                                                            className="w-full sm:w-auto whitespace-nowrap bg-amber-600 hover:bg-amber-700 text-white text-xs font-black py-2 px-4 rounded-xl transition shadow disabled:opacity-50 flex items-center justify-center gap-1.5"
+                                                        >
+                                                            {uploadingDocType === 'authorization_letter' ? '⏳ Subiendo...' : '📤 Subir Carta'}
+                                                        </button>
+                                                    )}
+                                                </div>
+
+                                                {campaign.authorizationLetterUrl && (
+                                                    <a
+                                                        href={campaign.authorizationLetterUrl}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="inline-flex items-center gap-1 text-xs text-amber-700 font-bold hover:underline"
+                                                    >
+                                                        <FileText className="w-3.5 h-3.5" /> Ver carta de autorización adjunta ↗
+                                                    </a>
+                                                )}
+                                            </div>
+
+                                            {/* ── 4. CERTIFICACIÓN MÉDICA / EPICRISIS (Si aplica) ── */}
+                                            {medRequired && (
+                                                <div className="bg-white border-2 border-red-200 rounded-2xl p-4 space-y-3 shadow-sm hover:border-red-300 transition">
+                                                    <div className="flex items-start justify-between gap-2">
+                                                        <div className="flex items-start gap-2.5">
+                                                            <div className="w-8 h-8 rounded-xl bg-red-50 text-red-700 flex items-center justify-center flex-shrink-0 font-bold">
+                                                                ⚕️
                                                             </div>
-                                                            <p className="text-[11px] text-amber-700 italic pt-1">
-                                                                Tan pronto sea aprobada por el administrador, el botón de solicitud de retiro se habilitará automáticamente.
-                                                            </p>
+                                                            <div>
+                                                                <h5 className="text-xs font-black text-slate-900 uppercase">4. Certificado Médico / Epicrisis Oficial</h5>
+                                                                <p className="text-[11px] text-slate-500">Diagnóstico médico, firma, sello y registro profesional (vigencia &le; 60 días).</p>
+                                                            </div>
                                                         </div>
-                                                    </div>
-                                                </div>
-                                            )}
-
-                                            {/* ─ C: DOC RECHAZADO ─ */}
-                                            {medRequired && medStatus === 'rejected' && (
-                                                <div className="w-full bg-red-50 border-2 border-red-200 rounded-2xl p-4 space-y-3 shadow-sm">
-                                                    <div className="flex items-start space-x-3">
-                                                        <div className="w-9 h-9 rounded-xl bg-red-100 text-red-700 flex items-center justify-center flex-shrink-0 text-lg">
-                                                            ❌
-                                                        </div>
-                                                        <div className="flex-1">
-                                                            <p className="font-black text-red-950 text-sm">Documentación Médica No Aprobada</p>
-                                                            {campaign.medicalAdminNote && (
-                                                                <div className="mt-2 bg-white/80 border border-red-200 rounded-xl p-2.5">
-                                                                    <p className="text-[11px] font-bold text-red-800 uppercase tracking-wider">Motivo de rechazo:</p>
-                                                                    <p className="text-xs text-red-900 mt-0.5">{campaign.medicalAdminNote}</p>
-                                                                </div>
-                                                            )}
-                                                            <p className="text-xs text-red-800 mt-2">
-                                                                Por favor sube un documento corregido que cumpla con todos los requisitos (diagnóstico, firma, sello y legibilidad).
-                                                            </p>
-                                                        </div>
+                                                        {renderDocBadge(medStatus, true)}
                                                     </div>
 
-                                                    <label className="block bg-white p-3 rounded-xl border border-red-100">
-                                                        <span className="text-xs font-bold text-red-800 block mb-1">Subir nuevo documento corregido</span>
+                                                    {campaign.medicalAdminNote && (
+                                                        <div className="bg-red-50 p-2.5 rounded-xl border border-red-200 text-xs text-red-800">
+                                                            <strong>Observación de auditoría médica:</strong> {campaign.medicalAdminNote}
+                                                        </div>
+                                                    )}
+
+                                                    <div className="flex flex-col sm:flex-row gap-2 items-center">
                                                         <input
                                                             type="file"
-                                                            accept=".pdf,.jpg,.jpeg,.png"
-                                                            className="block w-full text-xs file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-red-600 file:text-white hover:file:bg-red-700 cursor-pointer border border-dashed border-red-200 rounded-lg p-2 bg-red-50/50"
-                                                            onChange={e => setMedDocFile(e.target.files?.[0] ?? null)}
+                                                            accept=".pdf,.jpg,.jpeg,.png,.webp"
+                                                            className="block w-full text-xs text-slate-600 file:mr-2 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-red-600 file:text-white hover:file:bg-red-700 cursor-pointer border border-dashed border-red-200 rounded-xl p-1.5 bg-red-50/40"
+                                                            onChange={e => setSelectedDocFiles(prev => ({ ...prev, medical: e.target.files?.[0] ?? null }))}
                                                         />
-                                                    </label>
+                                                        {selectedDocFiles.medical && (
+                                                            <button
+                                                                onClick={() => handleFileUpload('medical', 'Documento Médico / Epicrisis')}
+                                                                disabled={uploadingDocType === 'medical'}
+                                                                className="w-full sm:w-auto whitespace-nowrap bg-red-600 hover:bg-red-700 text-white text-xs font-black py-2 px-4 rounded-xl transition shadow disabled:opacity-50 flex items-center justify-center gap-1.5"
+                                                            >
+                                                                {uploadingDocType === 'medical' ? '⏳ Subiendo...' : '📤 Subir Doc. Médico'}
+                                                            </button>
+                                                        )}
+                                                    </div>
 
-                                                    {medDocFile && (
-                                                        <button
-                                                            onClick={handleMedDocUpload}
-                                                            disabled={isUploadingMedDoc}
-                                                            className="w-full bg-red-600 hover:bg-red-700 text-white text-sm font-black py-3 rounded-xl transition shadow-md disabled:opacity-50 flex items-center justify-center gap-2"
+                                                    {campaign.medicalDocumentUrl && (
+                                                        <a
+                                                            href={campaign.medicalDocumentUrl}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className="inline-flex items-center gap-1 text-xs text-red-700 font-bold hover:underline"
                                                         >
-                                                            {isUploadingMedDoc ? <><span className="animate-spin">⏳</span> Subiendo...</> : '📤 Enviar Documento Corregido'}
-                                                        </button>
+                                                            <FileText className="w-3.5 h-3.5" /> Ver documento médico adjunto ↗
+                                                        </a>
                                                     )}
                                                 </div>
                                             )}
 
-                                            {/* ─ D: SE PIDIÓ MÁS INFORMACIÓN ─ */}
-                                            {medRequired && medStatus === 'more_info_required' && (
-                                                <div className="w-full bg-purple-50 border-2 border-purple-200 rounded-2xl p-4 space-y-3 shadow-sm">
-                                                    <div className="flex items-start space-x-3">
-                                                        <div className="w-9 h-9 rounded-xl bg-purple-100 text-purple-700 flex items-center justify-center flex-shrink-0 text-lg">
-                                                            📄
+                                            {/* ── 5. OTROS RESPALDOS ADICIONALES (Facturas, Presupuestos) ── */}
+                                            <div className="bg-white border-2 border-slate-200 rounded-2xl p-4 space-y-3 shadow-sm hover:border-purple-300 transition">
+                                                <div className="flex items-start justify-between gap-2">
+                                                    <div className="flex items-start gap-2.5">
+                                                        <div className="w-8 h-8 rounded-xl bg-purple-50 text-purple-700 flex items-center justify-center flex-shrink-0 font-bold">
+                                                            📎
                                                         </div>
-                                                        <div className="flex-1">
-                                                            <p className="font-black text-purple-950 text-sm">Se Requiere Documentación Adicional</p>
-                                                            {campaign.medicalAdminNote && (
-                                                                <div className="mt-2 bg-white/80 border border-purple-200 rounded-xl p-2.5">
-                                                                    <p className="text-[11px] font-bold text-purple-800 uppercase tracking-wider">El equipo solicita:</p>
-                                                                    <p className="text-xs text-purple-900 mt-0.5">{campaign.medicalAdminNote}</p>
-                                                                </div>
-                                                            )}
+                                                        <div>
+                                                            <h5 className="text-xs font-black text-slate-900 uppercase">5. Otros Respaldos Adicionales</h5>
+                                                            <p className="text-[11px] text-slate-500">Facturas, proformas, recetas o presupuestos clínicos complementarios.</p>
                                                         </div>
                                                     </div>
+                                                    {renderDocBadge(campaign.additionalVerificationDocUrl ? 'under_review' : 'pending_upload', false)}
+                                                </div>
 
-                                                    <label className="block bg-white p-3 rounded-xl border border-purple-100">
-                                                        <span className="text-xs font-bold text-purple-800 block mb-1">Subir documentación solicitada</span>
-                                                        <input
-                                                            type="file"
-                                                            accept=".pdf,.jpg,.jpeg,.png"
-                                                            className="block w-full text-xs file:mr-3 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-purple-600 file:text-white hover:file:bg-purple-700 cursor-pointer border border-dashed border-purple-200 rounded-lg p-2 bg-purple-50/50"
-                                                            onChange={e => setMedDocFile(e.target.files?.[0] ?? null)}
-                                                        />
-                                                    </label>
-
-                                                    {medDocFile && (
+                                                <div className="flex flex-col sm:flex-row gap-2 items-center">
+                                                    <input
+                                                        type="file"
+                                                        accept=".pdf,.jpg,.jpeg,.png,.webp"
+                                                        className="block w-full text-xs text-slate-600 file:mr-2 file:py-1.5 file:px-3 file:rounded-xl file:border-0 file:text-xs file:font-bold file:bg-purple-600 file:text-white hover:file:bg-purple-700 cursor-pointer border border-dashed border-slate-200 rounded-xl p-1.5 bg-slate-50"
+                                                        onChange={e => setSelectedDocFiles(prev => ({ ...prev, additional: e.target.files?.[0] ?? null }))}
+                                                    />
+                                                    {selectedDocFiles.additional && (
                                                         <button
-                                                            onClick={handleMedDocUpload}
-                                                            disabled={isUploadingMedDoc}
-                                                            className="w-full bg-purple-600 hover:bg-purple-700 text-white text-sm font-black py-3 rounded-xl transition shadow-md disabled:opacity-50 flex items-center justify-center gap-2"
+                                                            onClick={() => handleFileUpload('additional', 'Documento Adicional')}
+                                                            disabled={uploadingDocType === 'additional'}
+                                                            className="w-full sm:w-auto whitespace-nowrap bg-purple-600 hover:bg-purple-700 text-white text-xs font-black py-2 px-4 rounded-xl transition shadow disabled:opacity-50 flex items-center justify-center gap-1.5"
                                                         >
-                                                            {isUploadingMedDoc ? <><span className="animate-spin">⏳</span> Subiendo...</> : '📤 Enviar Documentación Adicional'}
+                                                            {uploadingDocType === 'additional' ? '⏳ Subiendo...' : '📤 Subir Respaldo'}
                                                         </button>
                                                     )}
                                                 </div>
-                                            )}
 
-                                            {/* ─ E: DOC APROBADO / NO REQUERIDO ─ */}
-                                            {medRequired && medStatus === 'approved' && (
-                                                <div className="w-full bg-emerald-50 border border-emerald-200 rounded-2xl p-3.5 flex items-center space-x-3">
-                                                    <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center flex-shrink-0 font-bold text-base">
-                                                        ✅
-                                                    </div>
-                                                    <div>
-                                                        <p className="text-xs font-bold text-emerald-950">Verificación Médica Aprobada</p>
-                                                        <p className="text-[11px] text-emerald-700">Tu documentación fue aprobada con éxito. Ya puedes ingresar tu solicitud de desembolso.</p>
-                                                    </div>
-                                                </div>
-                                            )}
+                                                {campaign.additionalVerificationDocUrl && (
+                                                    <a
+                                                        href={campaign.additionalVerificationDocUrl}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="inline-flex items-center gap-1 text-xs text-purple-700 font-bold hover:underline"
+                                                    >
+                                                        <FileText className="w-3.5 h-3.5" /> Ver documento adicional adjunto ↗
+                                                    </a>
+                                                )}
+                                            </div>
 
                                             {/* Botón de Retiro Condicionado */}
                                             <button
@@ -818,6 +924,8 @@ const CampaignDetails = () => {
                                                                 if (s === 'more_info_required') return '• Se requiere información adicional de tu documentación médica.';
                                                                 return '• Debes subir el certificado médico oficial y esperar su aprobación.';
                                                             }
+                                                            if (r === 'ID_DOC_REJECTED') return '• La cédula de identidad fue rechazada. Por favor sube una copia legible.';
+                                                            if (r === 'BANK_CERT_REJECTED') return '• El certificado bancario fue rechazado. Debe coincidir con la cuenta del titular.';
                                                             return `• ${r}`;
                                                         }).join('\n');
                                                         alert(`🔒 Retiro Bloqueado\n\n${msgs}\n\nPara seguridad de los fondos, todos los requisitos de verificación deben estar aprobados.`);

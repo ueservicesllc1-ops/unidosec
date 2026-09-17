@@ -43,8 +43,15 @@ export const isCampaignRequiringMedicalDoc = (campaign: any): boolean => {
 };
 
 // ─────────────────────────────────────────────────────────────
-// TIPOS
+// TIPOS DE DOCUMENTOS DE VERIFICACIÓN
 // ─────────────────────────────────────────────────────────────
+export type VerificationDocType =
+    | 'medical'
+    | 'id_card'
+    | 'bank_certificate'
+    | 'authorization_letter'
+    | 'additional';
+
 export type MedicalDocumentStatus =
     | 'not_required'
     | 'pending_upload'
@@ -60,6 +67,7 @@ export interface MedicalVerificationLog {
     campaignTitle: string;
     userId: string;
     adminId?: string;
+    docType?: VerificationDocType;
     action: 'uploaded' | 'approved' | 'rejected' | 'more_info_requested' | 'resubmitted';
     statusBefore: MedicalDocumentStatus;
     statusAfter: MedicalDocumentStatus;
@@ -97,6 +105,16 @@ export const canWithdraw = (campaign: any): WithdrawalAuthorization => {
         }
     }
 
+    // 3. Verificación de Cédula si fue rechazada
+    if (campaign.idDocumentStatus === 'rejected') {
+        blockedBy.push('ID_DOC_REJECTED');
+    }
+
+    // 4. Verificación Bancaria si fue rechazada
+    if (campaign.bankCertificateStatus === 'rejected') {
+        blockedBy.push('BANK_CERT_REJECTED');
+    }
+
     return {
         allowed: blockedBy.length === 0,
         blockedBy,
@@ -104,46 +122,96 @@ export const canWithdraw = (campaign: any): WithdrawalAuthorization => {
 };
 
 // ─────────────────────────────────────────────────────────────
-// SUBIR DOCUMENTO MÉDICO (organizador)
-// Ruta privada: medical_docs/{campaignId}/{timestamp}_{filename}
+// SUBIR CUALQUIER DOCUMENTO DE VERIFICACIÓN (organizador)
+// Admite PDF, JPG, PNG, DOCX de hasta 20MB
 // ─────────────────────────────────────────────────────────────
-export const uploadMedicalDocument = async (
+export const uploadVerificationDocument = async (
     campaignId: string,
     file: File,
+    docType: VerificationDocType,
     userId: string
 ): Promise<string> => {
+    if (!file) throw new Error('No se ha proporcionado ningún archivo.');
+
+    // Validar tamaño: máximo 20MB
+    const MAX_SIZE_MB = 20;
+    if (file.size > MAX_SIZE_MB * 1024 * 1024) {
+        throw new Error(`El archivo supera el límite permitido de ${MAX_SIZE_MB}MB. Por favor comprímelo o elige uno más liviano.`);
+    }
+
     const cleanName = file.name.replace(/[^a-z0-9._-]/gi, '_').toLowerCase();
-    const path = `medical_docs/${campaignId}/${Date.now()}_${cleanName}`;
+    const path = `verification_docs/${campaignId}/${docType}_${Date.now()}_${cleanName}`;
     const storageRef = ref(storage, path);
 
     const snapshot = await uploadBytes(storageRef, file);
     const downloadURL = await getDownloadURL(snapshot.ref);
 
     const prevSnap = await getDoc(doc(db, 'campaigns', campaignId));
-    const prevStatus: MedicalDocumentStatus = prevSnap.exists()
-        ? (prevSnap.data().medicalDocumentStatus ?? 'pending_upload')
-        : 'pending_upload';
+    const campaignData = prevSnap.exists() ? prevSnap.data() : {};
 
-    const newStatus: MedicalDocumentStatus = 'under_review';
+    let updateFields: Record<string, any> = {};
+    let statusField = 'medicalDocumentStatus';
+    let prevStatus: MedicalDocumentStatus = 'pending_upload';
 
-    // Actualizar campaña
-    await updateDoc(doc(db, 'campaigns', campaignId), {
-        medicalDocumentUrl: downloadURL,
-        medicalDocumentStatus: newStatus,
-        medicalDocumentUploadedAt: serverTimestamp(),
-    });
+    switch (docType) {
+        case 'medical':
+            statusField = 'medicalDocumentStatus';
+            prevStatus = campaignData.medicalDocumentStatus ?? 'pending_upload';
+            updateFields = {
+                medicalDocumentUrl: downloadURL,
+                medicalDocumentStatus: 'under_review',
+                medicalDocumentUploadedAt: serverTimestamp(),
+            };
+            break;
+        case 'id_card':
+            statusField = 'idDocumentStatus';
+            prevStatus = campaignData.idDocumentStatus ?? 'pending_upload';
+            updateFields = {
+                idDocumentUrl: downloadURL,
+                idDocumentStatus: 'under_review',
+                idDocumentUploadedAt: serverTimestamp(),
+            };
+            break;
+        case 'bank_certificate':
+            statusField = 'bankCertificateStatus';
+            prevStatus = campaignData.bankCertificateStatus ?? 'pending_upload';
+            updateFields = {
+                bankCertificateUrl: downloadURL,
+                bankCertificateStatus: 'under_review',
+                bankCertificateUploadedAt: serverTimestamp(),
+            };
+            break;
+        case 'authorization_letter':
+            statusField = 'authorizationLetterStatus';
+            prevStatus = campaignData.authorizationLetterStatus ?? 'pending_upload';
+            updateFields = {
+                authorizationLetterUrl: downloadURL,
+                authorizationLetterStatus: 'under_review',
+                authorizationLetterUploadedAt: serverTimestamp(),
+            };
+            break;
+        case 'additional':
+            updateFields = {
+                additionalVerificationDocUrl: downloadURL,
+                additionalVerificationUploadedAt: serverTimestamp(),
+            };
+            break;
+    }
 
-    // Log de auditoría
-    const campaignSnap = await getDoc(doc(db, 'campaigns', campaignId));
+    // Actualizar documento de la campaña
+    await updateDoc(doc(db, 'campaigns', campaignId), updateFields);
+
+    // Registro de Auditoría
     await addDoc(collection(db, 'medical_verification_log'), {
         campaignId,
-        campaignTitle: campaignSnap.exists() ? campaignSnap.data().title : '',
-        userId,
+        campaignTitle: campaignData.title ?? '',
+        userId: userId || campaignData.userId || campaignData.organizer?.email || '',
+        docType,
         action: (prevStatus === 'rejected' || prevStatus === 'more_info_required')
             ? 'resubmitted'
             : 'uploaded',
         statusBefore: prevStatus,
-        statusAfter: newStatus,
+        statusAfter: 'under_review',
         documentUrl: downloadURL,
         timestamp: serverTimestamp(),
     } satisfies Omit<MedicalVerificationLog, 'id'>);
@@ -151,11 +219,21 @@ export const uploadMedicalDocument = async (
     return downloadURL;
 };
 
-// ─────────────────────────────────────────────────────────────
-// ACTUALIZAR ESTADO — solo admin (protegido también en Firestore Rules)
-// ─────────────────────────────────────────────────────────────
-export const updateMedicalDocumentStatus = async (
+// Wrapper para compatibilidad hacia atrás
+export const uploadMedicalDocument = async (
     campaignId: string,
+    file: File,
+    userId: string
+): Promise<string> => {
+    return uploadVerificationDocument(campaignId, file, 'medical', userId);
+};
+
+// ─────────────────────────────────────────────────────────────
+// ACTUALIZAR ESTADO DE DOCUMENTO ESPECÍFICO (admin)
+// ─────────────────────────────────────────────────────────────
+export const updateVerificationDocumentStatus = async (
+    campaignId: string,
+    docType: VerificationDocType,
     newStatus: MedicalDocumentStatus,
     adminId: string,
     adminNote: string
@@ -164,21 +242,58 @@ export const updateMedicalDocumentStatus = async (
     const campaignSnap = await getDoc(campaignRef);
     if (!campaignSnap.exists()) throw new Error('Campaign not found');
 
-    const prevStatus: MedicalDocumentStatus =
-        (campaignSnap.data().medicalDocumentStatus as MedicalDocumentStatus) ?? 'pending_upload';
+    const data = campaignSnap.data();
+    let statusField = 'medicalDocumentStatus';
+    let prevStatus: MedicalDocumentStatus = 'pending_upload';
+    let docUrl = '';
+
+    switch (docType) {
+        case 'medical':
+            statusField = 'medicalDocumentStatus';
+            prevStatus = data.medicalDocumentStatus ?? 'pending_upload';
+            docUrl = data.medicalDocumentUrl ?? '';
+            break;
+        case 'id_card':
+            statusField = 'idDocumentStatus';
+            prevStatus = data.idDocumentStatus ?? 'pending_upload';
+            docUrl = data.idDocumentUrl ?? '';
+            break;
+        case 'bank_certificate':
+            statusField = 'bankCertificateStatus';
+            prevStatus = data.bankCertificateStatus ?? 'pending_upload';
+            docUrl = data.bankCertificateUrl ?? '';
+            break;
+        case 'authorization_letter':
+            statusField = 'authorizationLetterStatus';
+            prevStatus = data.authorizationLetterStatus ?? 'pending_upload';
+            docUrl = data.authorizationLetterUrl ?? '';
+            break;
+        default:
+            statusField = 'medicalDocumentStatus';
+            prevStatus = data.medicalDocumentStatus ?? 'pending_upload';
+            docUrl = data.medicalDocumentUrl ?? '';
+            break;
+    }
 
     await updateDoc(campaignRef, {
-        medicalDocumentStatus: newStatus,
-        medicalAdminNote: adminNote,
-        medicalReviewedBy: adminId,
-        medicalReviewedAt: serverTimestamp(),
+        [statusField]: newStatus,
+        [`${docType}AdminNote`]: adminNote,
+        [`${docType}ReviewedBy`]: adminId,
+        [`${docType}ReviewedAt`]: serverTimestamp(),
+        // Mantener compatibilidad médica general
+        ...(docType === 'medical' ? {
+            medicalAdminNote: adminNote,
+            medicalReviewedBy: adminId,
+            medicalReviewedAt: serverTimestamp(),
+        } : {})
     });
 
     await addDoc(collection(db, 'medical_verification_log'), {
         campaignId,
-        campaignTitle: campaignSnap.data().title ?? '',
-        userId: campaignSnap.data().organizer?.email ?? '',
+        campaignTitle: data.title ?? '',
+        userId: data.userId || data.organizer?.email || '',
         adminId,
+        docType,
         action: newStatus === 'approved'
             ? 'approved'
             : newStatus === 'rejected'
@@ -187,9 +302,19 @@ export const updateMedicalDocumentStatus = async (
         statusBefore: prevStatus,
         statusAfter: newStatus,
         adminNote,
-        documentUrl: campaignSnap.data().medicalDocumentUrl ?? '',
+        documentUrl: docUrl,
         timestamp: serverTimestamp(),
     } satisfies Omit<MedicalVerificationLog, 'id'>);
+};
+
+// Wrapper para compatibilidad hacia atrás
+export const updateMedicalDocumentStatus = async (
+    campaignId: string,
+    newStatus: MedicalDocumentStatus,
+    adminId: string,
+    adminNote: string
+): Promise<void> => {
+    return updateVerificationDocumentStatus(campaignId, 'medical', newStatus, adminId, adminNote);
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -208,7 +333,7 @@ export const getMedicalVerificationLog = async (
 };
 
 // ─────────────────────────────────────────────────────────────
-// OBTENER CAMPAÑAS CON VERIFICACIÓN MÉDICA (para el panel admin)
+// OBTENER CAMPAÑAS CON VERIFICACIÓN (para el panel admin)
 // ─────────────────────────────────────────────────────────────
 export const getAllMedicalCampaigns = async (): Promise<any[]> => {
     try {
@@ -219,12 +344,12 @@ export const getAllMedicalCampaigns = async (): Promise<any[]> => {
         const snap = await getDocs(q);
         return snap.docs
             .map(d => ({ id: d.id, ...d.data() }))
-            .filter(c => isCampaignRequiringMedicalDoc(c));
+            .filter(c => isCampaignRequiringMedicalDoc(c) || c.medicalDocumentUrl || c.idDocumentUrl || c.bankCertificateUrl || c.authorizationLetterUrl);
     } catch (e) {
         // Fallback si el índice orderBy falla
         const snap = await getDocs(collection(db, 'campaigns'));
         return snap.docs
             .map(d => ({ id: d.id, ...d.data() }))
-            .filter(c => isCampaignRequiringMedicalDoc(c));
+            .filter(c => isCampaignRequiringMedicalDoc(c) || c.medicalDocumentUrl || c.idDocumentUrl || c.bankCertificateUrl || c.authorizationLetterUrl);
     }
 };

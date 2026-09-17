@@ -8,6 +8,9 @@ import {
   RefreshCw,
   ChevronLeft,
   Megaphone,
+  Edit3,
+  Check,
+  X,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -15,6 +18,7 @@ import {
   subscribeToMessages,
   sendMessage,
   markConversationAsRead,
+  editMessage,
   type Conversation,
   type Message,
 } from "../services/messagingService";
@@ -58,6 +62,36 @@ const UserProfile = () => {
   const [sending, setSending] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Edición de mensajes del usuario
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editingText, setEditingText] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  const handleStartEdit = (msg: Message) => {
+    setEditingMessageId(msg.id || null);
+    setEditingText(msg.message);
+  };
+
+  const handleCancelEdit = () => {
+    setEditingMessageId(null);
+    setEditingText("");
+  };
+
+  const handleSaveUserEdit = async (msgId: string, isLast: boolean) => {
+    if (!editingText.trim() || !selectedConv?.id) return;
+    setSavingEdit(true);
+    try {
+      await editMessage(selectedConv.id, msgId, editingText.trim(), isLast);
+      setEditingMessageId(null);
+      setEditingText("");
+    } catch (err) {
+      console.error("Error editing message:", err);
+      alert("Error al guardar cambios");
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
   // Redirect if not logged in
   useEffect(() => {
     if (!user) navigate("/login");
@@ -66,14 +100,14 @@ const UserProfile = () => {
   // Subscribe to conversations
   useEffect(() => {
     if (!user) return;
-    const unsub = subscribeToUserConversations(user.uid, setConversations);
+    const unsub = subscribeToUserConversations(user.uid, setConversations, user.email);
     return () => unsub();
   }, [user]);
 
   // Subscribe to notifications
   useEffect(() => {
     if (!user) return;
-    const unsub = subscribeToUserNotifications(user.uid, setNotifications);
+    const unsub = subscribeToUserNotifications(user.uid, setNotifications, user.email);
     return () => unsub();
   }, [user]);
 
@@ -321,27 +355,82 @@ const UserProfile = () => {
                   {messages.length === 0 && (
                     <div className="text-center py-8 text-gray-400 text-sm">Cargando mensajes...</div>
                   )}
-                  {messages.map(msg => {
+                  {messages.map((msg, index) => {
                     const isAdmin = msg.senderType === "admin";
+                    const isLast = index === messages.length - 1;
+                    const isEditing = editingMessageId === msg.id;
+
                     return (
-                      <div key={msg.id} className={`flex ${isAdmin ? "justify-start" : "justify-end"}`}>
-                        <div className={`max-w-[80%] rounded-2xl px-4 py-3 ${
+                      <div key={msg.id} className={`flex ${isAdmin ? "justify-start" : "justify-end"} group`}>
+                        <div className={`max-w-[85%] sm:max-w-[80%] rounded-2xl px-4 py-3 relative ${
                           isAdmin
                             ? "bg-white border border-gray-100 text-gray-900 rounded-tl-sm shadow-sm"
                             : "bg-primary text-white rounded-tr-sm"
                         }`}>
-                          <p className={`text-[10px] font-bold mb-1 ${isAdmin ? "text-primary" : "text-primary-100"}`}>
-                            {isAdmin ? "Administración Unidos EC" : (msg.senderName ?? "Tú")}
-                          </p>
-                          <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.message}</p>
-                          <p className={`text-[10px] mt-1.5 ${isAdmin ? "text-gray-400" : "text-white/70"}`}>
-                            {timeAgo(msg.createdAt)}
-                            {!isAdmin && (
-                              <span className="ml-1">
-                                {msg.isReadByAdmin ? " ✓✓" : " ✓"}
-                              </span>
-                            )}
-                          </p>
+                          <div className="flex items-center justify-between gap-2 mb-1">
+                            <p className={`text-[10px] font-bold ${isAdmin ? "text-primary" : "text-primary-100"}`}>
+                              {isAdmin ? "Administración Unidos EC" : (msg.senderName ?? "Tú")}
+                            </p>
+                            <div className="flex items-center gap-1.5">
+                              {msg.edited && (
+                                <span className={`text-[9px] italic font-normal ${isAdmin ? "text-gray-400" : "text-white/80"}`}>
+                                  (editado)
+                                </span>
+                              )}
+                              {!isAdmin && !isEditing && (
+                                <button
+                                  onClick={() => handleStartEdit(msg)}
+                                  title="Editar mensaje"
+                                  className="opacity-0 group-hover:opacity-100 p-0.5 hover:bg-white/20 rounded text-white/80 hover:text-white transition"
+                                >
+                                  <Edit3 className="w-3 h-3" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {isEditing ? (
+                            <div className="mt-1 space-y-2">
+                              <textarea
+                                value={editingText}
+                                onChange={(e) => setEditingText(e.target.value)}
+                                rows={3}
+                                className="w-full p-2.5 bg-white text-gray-900 text-sm rounded-xl border border-gray-300 outline-none focus:ring-2 focus:ring-primary/20 resize-none font-normal"
+                                placeholder="Edita tu mensaje..."
+                                autoFocus
+                              />
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  onClick={handleCancelEdit}
+                                  disabled={savingEdit}
+                                  className="px-2.5 py-1 text-xs font-bold text-white/80 hover:text-white hover:bg-white/10 rounded-lg transition"
+                                >
+                                  Cancelar
+                                </button>
+                                <button
+                                  onClick={() => msg.id && handleSaveUserEdit(msg.id, isLast)}
+                                  disabled={savingEdit || !editingText.trim()}
+                                  className="px-3 py-1 bg-white text-primary text-xs font-bold rounded-lg transition flex items-center gap-1 shadow-sm hover:bg-gray-100"
+                                >
+                                  {savingEdit ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                                  Guardar
+                                </button>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="text-sm whitespace-pre-wrap leading-relaxed">{msg.message}</p>
+                          )}
+
+                          {!isEditing && (
+                            <p className={`text-[10px] mt-1.5 ${isAdmin ? "text-gray-400" : "text-white/70"}`}>
+                              {timeAgo(msg.createdAt)}
+                              {!isAdmin && (
+                                <span className="ml-1">
+                                  {msg.isReadByAdmin ? " ✓✓" : " ✓"}
+                                </span>
+                              )}
+                            </p>
+                          )}
                         </div>
                       </div>
                     );
@@ -395,7 +484,7 @@ const UserProfile = () => {
               </h2>
               {unreadNotifs > 0 && (
                 <button
-                  onClick={() => markAllNotificationsRead(user.uid)}
+                  onClick={() => markAllNotificationsRead(user.uid, user.email)}
                   className="text-sm text-primary font-bold hover:underline"
                 >
                   Marcar todas como leídas
