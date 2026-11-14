@@ -1,8 +1,9 @@
 import React, { useState, useRef } from 'react';
-import { Camera, Upload, Loader2, ChevronRight, User, Heart, Image as ImageIcon, CheckCircle2, Clock } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { Camera, Upload, Loader2, ChevronRight, User, Heart, Image as ImageIcon, CheckCircle2, Clock, ShieldCheck, ExternalLink } from 'lucide-react';
+import { useNavigate, Link } from 'react-router-dom';
 import { createCampaign, uploadImage } from '../services/campaignService';
 import { useAuth } from '../context/AuthContext';
+import { CURRENT_TERMS_VERSION, TERMS_ACCEPTANCE_DECLARATION } from '../services/termsService';
 
 const StartCampaign = () => {
     const navigate = useNavigate();
@@ -11,6 +12,7 @@ const StartCampaign = () => {
     const [selectedImage, setSelectedImage] = useState<File | null>(null);
     const [imagePreview, setImagePreview] = useState<string | null>(null);
     const [createdCampaignId, setCreatedCampaignId] = useState<string | null>(null);
+    const [acceptedTerms, setAcceptedTerms] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const [formData, setFormData] = useState({
@@ -81,6 +83,11 @@ const StartCampaign = () => {
             return;
         }
 
+        if (!acceptedTerms) {
+            alert(`Debes leer y aceptar los Términos y Condiciones vigentes (${CURRENT_TERMS_VERSION}), incluida la Política de Integridad y Conducta de Campañas.`);
+            return;
+        }
+
         setIsSubmitting(true);
 
         try {
@@ -108,6 +115,10 @@ const StartCampaign = () => {
                 additionalImages: additionalImages, // Gallery URLs
                 userId: user?.uid,
                 organizerId: user?.uid,
+                termsAccepted: true,
+                termsVersion: CURRENT_TERMS_VERSION,
+                termsAcceptedAt: new Date().toISOString(),
+                termsAcceptanceText: TERMS_ACCEPTANCE_DECLARATION,
                 organizer: {
                     name: formData.organizerName,
                     email: formData.organizerEmail,
@@ -343,11 +354,41 @@ const StartCampaign = () => {
 
                     </div>
 
+                    {/* Terms and Conduct Policy Acceptance */}
+                    <div className="bg-gradient-to-br from-emerald-50/70 via-gray-50 to-emerald-50/40 rounded-2xl p-5 border-2 border-emerald-200/80 shadow-sm transition-all hover:border-emerald-300">
+                        <div className="flex items-start gap-3.5">
+                            <input
+                                id="termsCheckbox"
+                                type="checkbox"
+                                checked={acceptedTerms}
+                                onChange={(e) => setAcceptedTerms(e.target.checked)}
+                                className="mt-1 h-5 w-5 rounded border-gray-300 text-primary focus:ring-primary/20 focus:border-primary cursor-pointer transition"
+                            />
+                            <label htmlFor="termsCheckbox" className="text-sm text-gray-700 leading-relaxed cursor-pointer select-none">
+                                <span className="font-bold text-gray-900 block mb-1 flex items-center gap-2">
+                                    <ShieldCheck className="w-4 h-4 text-primary shrink-0" />
+                                    Aceptación vinculante de Términos y Condiciones ({CURRENT_TERMS_VERSION})
+                                </span>
+                                Declaro bajo juramento que toda la información suministrada es verídica. Acepto plenamente los{' '}
+                                <Link
+                                    to="/terms"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="font-semibold text-primary hover:text-[#008f5b] underline inline-flex items-center gap-0.5"
+                                >
+                                    Términos y Condiciones vigentes
+                                    <ExternalLink className="w-3 h-3 inline" />
+                                </Link>
+                                , incluyendo expresamente la <strong>Política de Integridad, Conducta y Uso Responsable de Campañas (Sección 6)</strong>, la cual faculta a Unidos EC a suspender o cancelar la campaña si se difunde información falsa o manipulada sobre fondos, procesos, retiros o auditorías de la plataforma.
+                            </label>
+                        </div>
+                    </div>
+
                     {/* Submit */}
                     <button
                         type="submit"
-                        disabled={isSubmitting}
-                        className={`w-full bg-primary text-white py-4 rounded-xl font-bold text-xl shadow-lg hover:shadow-xl hover:bg-[#008f5b] transform transition-all duration-200 flex items-center justify-center ${isSubmitting ? 'opacity-80 cursor-not-allowed' : 'hover:-translate-y-1'}`}
+                        disabled={isSubmitting || !acceptedTerms}
+                        className={`w-full bg-primary text-white py-4 rounded-xl font-bold text-xl shadow-lg hover:shadow-xl hover:bg-[#008f5b] transform transition-all duration-200 flex items-center justify-center ${isSubmitting || !acceptedTerms ? 'opacity-60 cursor-not-allowed' : 'hover:-translate-y-1'}`}
                     >
                         {isSubmitting ? (
                             <>
@@ -389,6 +430,9 @@ const StartCampaign = () => {
                             </p>
                             <p className="text-xs text-amber-800 leading-relaxed">
                                 Para garantizar la veracidad, seguridad y transparencia de todas las causas recaudadas en Unidos EC, nuestro equipo administrativo revisa minuciosamente cada campaña antes de habilitarla públicamente para recibir donaciones.
+                            </p>
+                            <p className="text-xs text-emerald-800 font-semibold pt-1 border-t border-amber-200/60">
+                                📧 En cuanto el administrador apruebe tu campaña, te enviaremos un correo electrónico a <strong>{formData.organizerEmail}</strong> con el aviso de publicación y los enlaces directos para compartirla en WhatsApp, Facebook y todas tus redes sociales.
                             </p>
                         </div>
 

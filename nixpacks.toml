@@ -3,4 +3,4 @@
   buildCommand = "npm run build"
 
 [start]
-  command = "npx serve -s dist -l $PORT"
+  command = "node server.js"

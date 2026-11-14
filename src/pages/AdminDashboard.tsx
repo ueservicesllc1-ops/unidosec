@@ -27,13 +27,28 @@ import {
     Download,
     MessageSquare,
     ShieldCheck,
+    ShieldAlert,
     History,
     Send,
     FileCheck,
     Image as ImageIcon,
     Maximize2,
     Paperclip,
+    Mail,
+    Share2,
+    ExternalLink,
+    KeyRound,
+    Copy,
 } from 'lucide-react';
+import { ComplianceManagementView } from '../components/ComplianceManagementView';
+import {
+    sendCampaignApprovalEmail,
+    buildApprovalInternalMessage,
+    getEmailConfig,
+    saveEmailConfig,
+    sendTestGmailEmail,
+    type CampaignShareLinks,
+} from '../services/emailService';
 import {
     getAllCampaigns,
     updateCampaignStatus,
@@ -129,6 +144,7 @@ const AdminDashboard = () => {
         { id: 'medical', label: 'Verificación de Documentos', icon: FileCheck },
         { id: 'messages', label: 'Mensajes', icon: MessageSquare, badge: adminUnreadCount },
         { id: 'accounting', label: 'Contabilidad', icon: Calculator },
+        { id: 'compliance', label: 'Cumplimiento y Conducta', icon: ShieldAlert },
         { id: 'campaigns', label: 'Campañas', icon: Megaphone },
         { id: 'settings', label: 'Configuración', icon: Settings },
     ];
@@ -149,8 +165,12 @@ const AdminDashboard = () => {
                 return <AdminMessagesView />;
             case 'accounting':
                 return <AccountingView />;
+            case 'compliance':
+                return <ComplianceManagementView />;
             case 'campaigns':
-                return <CampaignsView />;
+                return <CampaignsView onOpenSettings={() => setActiveTab('settings')} />;
+            case 'settings':
+                return <SettingsView />;
             default:
                 return <div className="p-8 text-center text-gray-500 italic text-xl">Selecciona una sección del panel lateral.</div>;
         }
@@ -300,13 +320,23 @@ const DashboardView = ({ stats, loading, onRefresh }: any) => (
     </div>
 );
 
-const CampaignsView = () => {
+const CampaignsView = ({ onOpenSettings }: { onOpenSettings?: () => void }) => {
     const [campaigns, setCampaigns] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
 
     const [filterStatus, setFilterStatus] = useState<'all' | 'pending' | 'active' | 'hidden'>('all');
     const [showDonationModal, setShowDonationModal] = useState(false);
     const [selectedCampaign, setSelectedCampaign] = useState<any>(null);
+    const [approvingId, setApprovingId] = useState<string | null>(null);
+    const [sendingEmailId, setSendingEmailId] = useState<string | null>(null);
+    const [approvalResultModal, setApprovalResultModal] = useState<{
+        campaign: any;
+        emailOk: boolean;
+        emailTo?: string;
+        emailError?: string;
+        emailCode?: string;
+        shareLinks: CampaignShareLinks;
+    } | null>(null);
 
     const fetchData = async () => {
         setLoading(true);
@@ -337,17 +367,107 @@ const CampaignsView = () => {
     const handleStatus = async (camp: any, status: any) => {
         const actionName = status === 'approved' ? 'APROBAR y hacer visible' : status === 'hidden' ? 'OCULTAR' : status;
         if (!confirm(`¿Estás seguro de ${actionName} la campaña "${camp.title}"?`)) return;
+        if (status === 'approved') {
+            setApprovingId(camp.id);
+        }
         try {
             await updateCampaignStatus(camp.id, status);
             if (status === 'approved') {
                 const recipientId = camp.organizerId || camp.userId || (camp.organizer as any)?.uid || camp.organizer?.email;
+                const organizerEmail = camp.organizer?.email || '';
+                const organizerName = camp.organizer?.name || 'Organizador';
+
+                // 1. Notificación en la campana del usuario
                 if (recipientId) {
-                    await sendSystemNotification.campaignApproved(recipientId, camp.id, camp.title, camp.organizer?.email).catch(console.error);
+                    await sendSystemNotification.campaignApproved(recipientId, camp.id, camp.title, organizerEmail).catch(console.error);
                 }
+
+                // 2. Mensaje interno automático con los enlaces de redes sociales
+                const internalMsg = buildApprovalInternalMessage(organizerName, camp.title, camp.id);
+                if (recipientId || organizerEmail) {
+                    await createConversation({
+                        userId: recipientId || organizerEmail,
+                        userEmail: organizerEmail,
+                        userName: organizerName,
+                        campaignId: camp.id,
+                        campaignTitle: camp.title,
+                        subject: internalMsg.subject,
+                        category: 'Campaña',
+                        firstMessage: internalMsg.message,
+                        adminId: 'admin',
+                        adminName: 'Administración Unidos EC',
+                    }).catch(console.error);
+                }
+
+                // 3. Envío de correo electrónico automático por Gmail (App Password) con botones de redes sociales
+                const emailRes = await sendCampaignApprovalEmail(camp);
+
+                setApprovalResultModal({
+                    campaign: camp,
+                    emailOk: emailRes.ok,
+                    emailTo: emailRes.to || organizerEmail,
+                    emailError: emailRes.error,
+                    emailCode: emailRes.code,
+                    shareLinks: emailRes.shareLinks,
+                });
             }
             fetchData();
         } catch (error) {
             alert("Error al actualizar");
+        } finally {
+            setApprovingId(null);
+        }
+    };
+
+    const handleSendApprovalEmail = async (camp: any) => {
+        const organizerEmail = camp.organizer?.email || '';
+        const organizerName = camp.organizer?.name || 'Organizador';
+
+        if (!organizerEmail) {
+            alert(`La campaña "${camp.title}" no tiene un correo electrónico de organizador registrado.`);
+            return;
+        }
+
+        const alreadySentNote = camp.approvalEmailSent
+            ? '\n\n(Nota: Ya se había enviado un correo anteriormente, pero puedes reenviarlo si deseas).'
+            : '';
+
+        if (
+            !confirm(
+                `¿Deseas enviar el correo de "¡Tu campaña fue aprobada!" con los botones para compartir en redes sociales a ${organizerName} (${organizerEmail})?${alreadySentNote}`
+            )
+        ) {
+            return;
+        }
+
+        setSendingEmailId(camp.id);
+        try {
+            const recipientId = camp.organizerId || camp.userId || (camp.organizer as any)?.uid || organizerEmail;
+
+            // Enviar también notificación en la plataforma
+            if (recipientId) {
+                await sendSystemNotification
+                    .campaignApproved(recipientId, camp.id, camp.title, organizerEmail)
+                    .catch(console.error);
+            }
+
+            // Enviar correo electrónico por Gmail con los links de redes sociales
+            const emailRes = await sendCampaignApprovalEmail(camp);
+
+            setApprovalResultModal({
+                campaign: camp,
+                emailOk: emailRes.ok,
+                emailTo: emailRes.to || organizerEmail,
+                emailError: emailRes.error,
+                emailCode: emailRes.code,
+                shareLinks: emailRes.shareLinks,
+            });
+
+            fetchData();
+        } catch (error) {
+            alert('Error al enviar el correo de aprobación.');
+        } finally {
+            setSendingEmailId(null);
         }
     };
 
@@ -492,7 +612,12 @@ const CampaignsView = () => {
                                 </td>
                                 <td className="px-6 py-4">
                                     <p className="text-sm font-medium text-gray-900 truncate uppercase">{camp.organizer?.name}</p>
-                                    <p className="text-xs text-gray-500">{camp.organizer?.city}</p>
+                                    <p className="text-xs text-gray-500 truncate max-w-[180px]" title={camp.organizer?.email}>
+                                        {camp.organizer?.email || camp.organizer?.city}
+                                    </p>
+                                    {camp.organizer?.email && camp.organizer?.city && (
+                                        <p className="text-[10px] text-gray-400">{camp.organizer?.city}</p>
+                                    )}
                                 </td>
                                 <td className="px-6 py-4">
                                     <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide ${
@@ -525,13 +650,45 @@ const CampaignsView = () => {
                                         {camp.status === 'pending' && (
                                             <button
                                                 onClick={() => handleStatus(camp, 'approved')}
-                                                className="px-2.5 py-1 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 shadow-sm mr-1"
-                                                title="Aprobar campaña para que sea visible públicamente"
+                                                disabled={approvingId === camp.id}
+                                                className="px-2.5 py-1 bg-green-600 hover:bg-green-700 text-white rounded-lg text-xs font-bold transition flex items-center gap-1 shadow-sm mr-1 disabled:opacity-50"
+                                                title="Aprobar campaña y enviar correo con enlaces de redes sociales"
                                             >
-                                                <CheckCircle className="w-3.5 h-3.5" />
-                                                Aprobar
+                                                {approvingId === camp.id ? (
+                                                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                                ) : (
+                                                    <CheckCircle className="w-3.5 h-3.5" />
+                                                )}
+                                                {approvingId === camp.id ? 'Aprobando...' : 'Aprobar'}
                                             </button>
                                         )}
+                                        <button
+                                            onClick={() => handleSendApprovalEmail(camp)}
+                                            disabled={sendingEmailId === camp.id}
+                                            className={`px-2.5 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1 shadow-sm mr-1 disabled:opacity-50 ${
+                                                camp.approvalEmailSent
+                                                    ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                                                    : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                                            }`}
+                                            title={
+                                                camp.approvalEmailSent
+                                                    ? `Correo de aprobación ya enviado a ${camp.organizer?.email || 'organizador'} (clic para reenviar)`
+                                                    : `Enviar correo de campaña aprobada y links de redes sociales a ${camp.organizer?.email || 'organizador'}`
+                                            }
+                                        >
+                                            {sendingEmailId === camp.id ? (
+                                                <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                            ) : (
+                                                <Mail className="w-3.5 h-3.5" />
+                                            )}
+                                            <span>
+                                                {sendingEmailId === camp.id
+                                                    ? 'Enviando...'
+                                                    : camp.approvalEmailSent
+                                                    ? 'Correo Enviado ✓'
+                                                    : 'Enviar Correo'}
+                                            </span>
+                                        </button>
                                         <SendMessageButton
                                             userId={camp.organizerId || camp.userId || (camp.organizer as any)?.uid || camp.organizer?.email || ''}
                                             userEmail={camp.organizer?.email || ''}
@@ -586,6 +743,188 @@ const CampaignsView = () => {
                         fetchData();
                     }}
                 />
+            )}
+
+            {/* Modal de Confirmación de Aprobación + Correo y Links de Redes Sociales */}
+            {approvalResultModal && (
+                <div
+                    className="fixed inset-0 z-[250] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+                    onClick={(e) => e.target === e.currentTarget && setApprovalResultModal(null)}
+                >
+                    <div className="bg-white rounded-3xl w-full max-w-xl shadow-2xl overflow-hidden max-h-[90vh] overflow-y-auto border border-gray-100">
+                        <div className="bg-gradient-to-r from-emerald-600 to-green-700 p-6 text-white flex items-start justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className="w-12 h-12 rounded-2xl bg-white/20 flex items-center justify-center shrink-0">
+                                    <CheckCircle2 className="w-7 h-7 text-white" />
+                                </div>
+                                <div>
+                                    <span className="inline-block text-[11px] font-black uppercase tracking-wider bg-white/20 px-2.5 py-0.5 rounded-full mb-1">
+                                        Campaña Aprobada y Publicada
+                                    </span>
+                                    <h3 className="text-lg font-black leading-snug">
+                                        {approvalResultModal.campaign.title}
+                                    </h3>
+                                </div>
+                            </div>
+                            <button
+                                onClick={() => setApprovalResultModal(null)}
+                                className="p-1.5 hover:bg-white/20 rounded-full transition"
+                            >
+                                <X className="w-5 h-5 text-white" />
+                            </button>
+                        </div>
+
+                        <div className="p-6 space-y-5">
+                            {/* Estado del correo electrónico */}
+                            {approvalResultModal.emailOk ? (
+                                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-start gap-3">
+                                    <Mail className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                                    <div className="text-xs text-emerald-900 space-y-1">
+                                        <p className="font-black text-sm text-emerald-950">
+                                            ✅ Correo electrónico enviado automáticamente por Gmail
+                                        </p>
+                                        <p>
+                                            Se envió el aviso de aprobación con todos los botones de redes sociales a:{' '}
+                                            <strong>{approvalResultModal.emailTo}</strong> y también se dejó copia en sus Mensajes internos.
+                                        </p>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl space-y-3">
+                                    <div className="flex items-start gap-3">
+                                        <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+                                        <div className="text-xs text-amber-900 space-y-1">
+                                            <p className="font-black text-sm text-amber-950">
+                                                Campaña aprobada (Notificación interna enviada, correo pendiente)
+                                            </p>
+                                            <p>
+                                                {approvalResultModal.emailError ||
+                                                    'Para que el correo se envíe solo desde tu Gmail, configura tu Contraseña de Aplicación (App Password de 16 letras) en la pestaña Configuración.'}
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <div className="flex flex-wrap gap-2 pt-1">
+                                        {onOpenSettings && (
+                                            <button
+                                                onClick={() => {
+                                                    setApprovalResultModal(null);
+                                                    onOpenSettings();
+                                                }}
+                                                className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 shadow-sm"
+                                            >
+                                                <KeyRound className="w-3.5 h-3.5" />
+                                                Configurar App Key de Gmail
+                                            </button>
+                                        )}
+                                        {approvalResultModal.emailTo && (
+                                            <a
+                                                href={`https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(
+                                                    approvalResultModal.emailTo
+                                                )}&su=${encodeURIComponent(
+                                                    `🎉 ¡Tu campaña "${approvalResultModal.campaign.title}" ha sido aprobada en Unidos EC!`
+                                                )}&body=${encodeURIComponent(
+                                                    buildApprovalInternalMessage(
+                                                        approvalResultModal.campaign.organizer?.name || 'Organizador',
+                                                        approvalResultModal.campaign.title,
+                                                        approvalResultModal.campaign.id
+                                                    ).message
+                                                )}`}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="px-3.5 py-2 bg-white border border-amber-300 hover:bg-amber-100 text-amber-900 rounded-xl text-xs font-bold transition flex items-center gap-1.5"
+                                            >
+                                                <Mail className="w-3.5 h-3.5" />
+                                                Abrir en Gmail Web ahora ↗
+                                            </a>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Links de compartir incluidos en el correo */}
+                            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <h4 className="text-xs font-black uppercase tracking-wider text-slate-700 flex items-center gap-1.5">
+                                        <Share2 className="w-4 h-4 text-primary" />
+                                        Enlaces de Redes Sociales Enviados al Creador
+                                    </h4>
+                                    <button
+                                        onClick={() => {
+                                            navigator.clipboard.writeText(approvalResultModal.shareLinks.campaignUrl);
+                                            alert('✅ Enlace de la campaña copiado al portapapeles');
+                                        }}
+                                        className="text-xs font-bold text-primary hover:underline flex items-center gap-1"
+                                    >
+                                        <Copy className="w-3.5 h-3.5" /> Copiar link
+                                    </button>
+                                </div>
+
+                                <div className="p-2.5 bg-white border border-slate-200 rounded-xl font-mono text-xs text-slate-700 truncate">
+                                    {approvalResultModal.shareLinks.campaignUrl}
+                                </div>
+
+                                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                    <a
+                                        href={approvalResultModal.shareLinks.whatsapp}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="py-2 px-3 bg-[#25D366] hover:opacity-95 text-white rounded-xl text-xs font-bold text-center transition flex items-center justify-center gap-1.5 shadow-sm"
+                                    >
+                                        💬 WhatsApp
+                                    </a>
+                                    <a
+                                        href={approvalResultModal.shareLinks.facebook}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="py-2 px-3 bg-[#1877F2] hover:opacity-95 text-white rounded-xl text-xs font-bold text-center transition flex items-center justify-center gap-1.5 shadow-sm"
+                                    >
+                                        📘 Facebook
+                                    </a>
+                                    <a
+                                        href={approvalResultModal.shareLinks.twitter}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="py-2 px-3 bg-slate-900 hover:opacity-95 text-white rounded-xl text-xs font-bold text-center transition flex items-center justify-center gap-1.5 shadow-sm"
+                                    >
+                                        ✖️ X (Twitter)
+                                    </a>
+                                    <a
+                                        href={approvalResultModal.shareLinks.telegram}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="py-2 px-3 bg-[#0088cc] hover:opacity-95 text-white rounded-xl text-xs font-bold text-center transition flex items-center justify-center gap-1.5 shadow-sm"
+                                    >
+                                        ✈️ Telegram
+                                    </a>
+                                    <a
+                                        href={approvalResultModal.shareLinks.linkedin}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="py-2 px-3 bg-[#0A66C2] hover:opacity-95 text-white rounded-xl text-xs font-bold text-center transition flex items-center justify-center gap-1.5 shadow-sm"
+                                    >
+                                        💼 LinkedIn
+                                    </a>
+                                    <Link
+                                        to={`/campaign/${approvalResultModal.campaign.id}`}
+                                        target="_blank"
+                                        className="py-2 px-3 bg-primary hover:bg-[#008f5b] text-white rounded-xl text-xs font-bold text-center transition flex items-center justify-center gap-1.5 shadow-sm"
+                                    >
+                                        <ExternalLink className="w-3.5 h-3.5" /> Ver Campaña
+                                    </Link>
+                                </div>
+                            </div>
+
+                            <div className="flex justify-end pt-1">
+                                <button
+                                    onClick={() => setApprovalResultModal(null)}
+                                    className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold rounded-xl transition"
+                                >
+                                    Entendido
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             )}
         </div>
     );
@@ -804,6 +1143,7 @@ const DonationsView = () => {
 const UsersView = () => {
     const [users, setUsers] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+    const [docViewModal, setDocViewModal] = useState<{ url: string; title: string } | null>(null);
 
     const fetchData = async () => {
         setLoading(true);
@@ -849,6 +1189,7 @@ const UsersView = () => {
                         <tr>
                             <th className="px-6 py-4">Usuario</th>
                             <th className="px-6 py-4">Email</th>
+                            <th className="px-6 py-4 text-center">Verificación de Retiro</th>
                             <th className="px-6 py-4">Última Conexión</th>
                             <th className="px-6 py-4">UID</th>
                             <th className="px-6 py-4 text-right">Acciones</th>
@@ -872,6 +1213,31 @@ const UsersView = () => {
                                     </div>
                                 </td>
                                 <td className="px-6 py-4 text-sm text-gray-600">{user.email}</td>
+                                <td className="px-6 py-4 text-center">
+                                    <div className="flex items-center justify-center gap-1.5 flex-wrap">
+                                        {user.verification_id_card_url ? (
+                                            <button
+                                                onClick={() => setDocViewModal({ url: user.verification_id_card_url, title: `Cédula de Identidad - ${user.displayName || user.email}` })}
+                                                className="px-2 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg text-xs font-bold transition flex items-center gap-1 shadow-sm"
+                                                title="Ver Cédula de Identidad"
+                                            >
+                                                <Eye className="w-3 h-3" /> 🪪 Cédula
+                                            </button>
+                                        ) : null}
+                                        {user.verification_bank_certificate_url ? (
+                                            <button
+                                                onClick={() => setDocViewModal({ url: user.verification_bank_certificate_url, title: `Certificado Bancario - ${user.displayName || user.email}` })}
+                                                className="px-2 py-1 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 rounded-lg text-xs font-bold transition flex items-center gap-1 shadow-sm"
+                                                title="Ver Certificado Bancario"
+                                            >
+                                                <Eye className="w-3 h-3" /> 🏦 Banco
+                                            </button>
+                                        ) : null}
+                                        {!user.verification_id_card_url && !user.verification_bank_certificate_url && (
+                                            <span className="text-[11px] text-gray-300 italic">Sin documentos</span>
+                                        )}
+                                    </div>
+                                </td>
                                 <td className="px-6 py-4 text-sm text-gray-500">
                                     {user.lastLogin?.seconds ? new Date(user.lastLogin.seconds * 1000).toLocaleString() : 'N/A'}
                                 </td>
@@ -901,6 +1267,39 @@ const UsersView = () => {
                     </tbody>
                 </table>
             </div>
+
+            {/* Modal: Ver documento de usuario */}
+            {docViewModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm" onClick={() => setDocViewModal(null)}>
+                    <div className="bg-white rounded-2xl overflow-hidden shadow-2xl max-w-4xl w-full max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+                        <div className="p-4 border-b flex items-center justify-between bg-slate-900 text-white">
+                            <h2 className="font-bold text-sm flex items-center truncate max-w-[80%]">
+                                <FileText className="w-4 h-4 mr-2 text-blue-400 flex-shrink-0" />
+                                <span className="truncate">{docViewModal.title}</span>
+                            </h2>
+                            <div className="flex items-center gap-2">
+                                <a
+                                    href={docViewModal.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="p-1.5 text-slate-300 hover:text-white hover:bg-white/10 rounded-lg text-xs font-bold flex items-center gap-1 transition"
+                                    title="Abrir en pestaña nueva"
+                                >
+                                    <Download className="w-4 h-4" /> Abrir Original
+                                </a>
+                                <button onClick={() => setDocViewModal(null)} className="p-1.5 hover:bg-white/10 rounded-full"><X className="w-5 h-5" /></button>
+                            </div>
+                        </div>
+                        <div className="overflow-auto flex-1 p-4 bg-slate-100 flex items-center justify-center min-h-[400px]">
+                            {docViewModal.url.match(/\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i) ? (
+                                <img src={docViewModal.url} alt={docViewModal.title} className="max-w-full max-h-[75vh] object-contain rounded-xl shadow" />
+                            ) : (
+                                <iframe src={docViewModal.url} title={docViewModal.title} className="w-full h-[75vh] rounded-xl border bg-white shadow" />
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
@@ -2804,6 +3203,267 @@ const AdminMessagesView = () => {
                     </div>
                 </div>
             )}
+        </div>
+    );
+};
+
+/* ─── VISTA DE CONFIGURACIÓN DE CORREO GMAIL (APP PASSWORD) ─── */
+const SettingsView = () => {
+    const [gmailUser, setGmailUser] = useState('heavencoffee.us@gmail.com');
+    const [gmailAppPassword, setGmailAppPassword] = useState('snky pott mqvd gncz');
+    const [senderName, setSenderName] = useState('Unidos EC | EcuFund');
+    const [testRecipient, setTestRecipient] = useState('heavencoffee.us@gmail.com');
+    const [showKey, setShowKey] = useState(false);
+    const [loading, setLoading] = useState(true);
+    const [saving, setSaving] = useState(false);
+    const [testing, setTesting] = useState(false);
+    const [statusBanner, setStatusBanner] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+    useEffect(() => {
+        getEmailConfig()
+            .then((cfg) => {
+                if (cfg.gmailUser) setGmailUser(cfg.gmailUser);
+                if (cfg.gmailAppPassword) setGmailAppPassword(cfg.gmailAppPassword);
+                if (cfg.senderName) setSenderName(cfg.senderName);
+                if (cfg.gmailUser) setTestRecipient(cfg.gmailUser);
+            })
+            .finally(() => setLoading(false));
+    }, []);
+
+    const handleSave = async (e: React.FormEvent) => {
+        e.preventDefault();
+        setSaving(true);
+        setStatusBanner(null);
+        try {
+            await saveEmailConfig({
+                gmailUser,
+                gmailAppPassword,
+                senderName,
+            });
+            setStatusBanner({
+                type: 'success',
+                text: '✅ Configuración de Gmail guardada correctamente. Ahora cada vez que apruebes una campaña se enviará el correo automáticamente con los links de redes sociales.',
+            });
+        } catch (err: any) {
+            setStatusBanner({
+                type: 'error',
+                text: 'Error al guardar la configuración: ' + (err?.message || 'Intenta nuevamente.'),
+            });
+        } finally {
+            setSaving(false);
+        }
+    };
+
+    const handleTestEmail = async () => {
+        if (!gmailUser.trim() || !gmailAppPassword.trim()) {
+            setStatusBanner({
+                type: 'error',
+                text: 'Por favor ingresa tu correo de Gmail y la Contraseña de Aplicación (16 letras) antes de enviar la prueba.',
+            });
+            return;
+        }
+        setTesting(true);
+        setStatusBanner(null);
+        try {
+            await saveEmailConfig({ gmailUser, gmailAppPassword, senderName });
+            const res = await sendTestGmailEmail({
+                to: testRecipient || gmailUser,
+                gmailUser,
+                gmailAppPassword,
+                senderName,
+            });
+            if (res.ok) {
+                setStatusBanner({
+                    type: 'success',
+                    text: `🎉 ¡Correo de prueba enviado con éxito a ${testRecipient || gmailUser}! Revisa tu bandeja de entrada para ver el diseño con los botones de redes sociales.`,
+                });
+            } else {
+                setStatusBanner({
+                    type: 'error',
+                    text: `❌ No se pudo enviar el correo: ${res.error}`,
+                });
+            }
+        } catch (err: any) {
+            setStatusBanner({
+                type: 'error',
+                text: `❌ Error al probar correo: ${err?.message || 'Error desconocido'}`,
+            });
+        } finally {
+            setTesting(false);
+        }
+    };
+
+    if (loading) {
+        return (
+            <div className="flex justify-center items-center py-20">
+                <RefreshCw className="animate-spin text-primary w-6 h-6" />
+            </div>
+        );
+    }
+
+    return (
+        <div className="max-w-4xl mx-auto space-y-6">
+            <div className="bg-white rounded-3xl shadow-sm border border-gray-100 overflow-hidden">
+                <div className="bg-gradient-to-r from-slate-900 to-slate-800 p-6 sm:p-8 text-white flex items-center justify-between flex-wrap gap-4">
+                    <div className="flex items-center gap-4">
+                        <div className="w-12 h-12 rounded-2xl bg-primary/20 border border-primary/30 flex items-center justify-center text-primary">
+                            <Mail className="w-6 h-6 text-emerald-400" />
+                        </div>
+                        <div>
+                            <h2 className="text-xl font-black">Correo Automático con Gmail (App Password)</h2>
+                            <p className="text-xs sm:text-sm text-slate-300 mt-0.5">
+                                Envía correos automáticos cuando apruebes una campaña con enlaces para compartir en redes sociales
+                            </p>
+                        </div>
+                    </div>
+                    <a
+                        href="https://myaccount.google.com/apppasswords"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="px-4 py-2.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold transition flex items-center gap-1.5 border border-white/15"
+                    >
+                        <KeyRound className="w-4 h-4 text-amber-400" />
+                        Crear App Password en Google ↗
+                    </a>
+                </div>
+
+                <div className="p-6 sm:p-8 space-y-6">
+                    {statusBanner && (
+                        <div
+                            className={`p-4 rounded-2xl border text-xs sm:text-sm font-medium flex items-start gap-3 ${
+                                statusBanner.type === 'success'
+                                    ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
+                                    : 'bg-red-50 border-red-200 text-red-800'
+                            }`}
+                        >
+                            {statusBanner.type === 'success' ? (
+                                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                            ) : (
+                                <AlertTriangle className="w-5 h-5 text-red-600 shrink-0 mt-0.5" />
+                            )}
+                            <div>{statusBanner.text}</div>
+                        </div>
+                    )}
+
+                    {/* Guía rápida para obtener la App Key de Gmail */}
+                    <div className="bg-blue-50/70 border border-blue-200 rounded-2xl p-5 space-y-2.5">
+                        <h3 className="text-sm font-black text-blue-950 flex items-center gap-2">
+                            <KeyRound className="w-4 h-4 text-blue-600" />
+                            ¿Cómo obtener tu Contraseña de Aplicación (App Key) de Gmail en 1 minuto?
+                        </h3>
+                        <ol className="text-xs text-blue-900 space-y-1.5 list-decimal list-inside leading-relaxed">
+                            <li>
+                                Entra a tu cuenta de Google en{' '}
+                                <a
+                                    href="https://myaccount.google.com/apppasswords"
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="font-bold underline text-blue-700"
+                                >
+                                    myaccount.google.com/apppasswords
+                                </a>{' '}
+                                (requiere tener activa la Verificación en 2 pasos).
+                            </li>
+                            <li>
+                                Escribe un nombre para la app, por ejemplo: <strong>Unidos EC</strong> y pulsa <strong>Crear</strong>.
+                            </li>
+                            <li>
+                                Google te mostrará un código de <strong>16 letras</strong> (ejemplo: <code className="bg-white px-1.5 py-0.5 rounded border">abcd efgh ijkl mnop</code>).
+                            </li>
+                            <li>
+                                Pega ese código abajo en el campo <strong>Contraseña de Aplicación (App Key)</strong> y guarda. (También puedes ponerlo en el archivo <code className="bg-white px-1.5 py-0.5 rounded border">.env</code> como <code className="bg-white px-1.5 py-0.5 rounded border">GMAIL_APP_PASSWORD</code>).
+                            </li>
+                        </ol>
+                    </div>
+
+                    <form onSubmit={handleSave} className="space-y-5">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
+                                    Correo de Gmail Remitente *
+                                </label>
+                                <input
+                                    type="email"
+                                    required
+                                    value={gmailUser}
+                                    onChange={(e) => setGmailUser(e.target.value)}
+                                    placeholder="ueservicesllc1@gmail.com"
+                                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:bg-white focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
+                                    Nombre Visible del Remitente
+                                </label>
+                                <input
+                                    type="text"
+                                    value={senderName}
+                                    onChange={(e) => setSenderName(e.target.value)}
+                                    placeholder="Unidos EC | EcuFund"
+                                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:bg-white focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition"
+                                />
+                            </div>
+                        </div>
+
+                        <div>
+                            <label className="block text-xs font-bold text-gray-700 uppercase tracking-wider mb-1.5">
+                                Contraseña de Aplicación de Google (App Password de 16 letras) *
+                            </label>
+                            <div className="relative">
+                                <input
+                                    type={showKey ? 'text' : 'password'}
+                                    required
+                                    value={gmailAppPassword}
+                                    onChange={(e) => setGmailAppPassword(e.target.value)}
+                                    placeholder="xxxx xxxx xxxx xxxx"
+                                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-mono focus:bg-white focus:ring-2 focus:ring-primary/20 focus:border-primary outline-none transition pr-24"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => setShowKey(!showKey)}
+                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-gray-500 hover:text-gray-800 px-2 py-1 rounded bg-gray-100"
+                                >
+                                    {showKey ? 'Ocultar' : 'Mostrar'}
+                                </button>
+                            </div>
+                            <p className="text-[11px] text-gray-500 mt-1">
+                                Puedes pegarla con o sin espacios; el sistema limpia los espacios automáticamente.
+                            </p>
+                        </div>
+
+                        <div className="flex flex-wrap items-center justify-between gap-4 pt-3 border-t border-gray-100">
+                            <button
+                                type="submit"
+                                disabled={saving}
+                                className="px-6 py-3 bg-primary hover:bg-[#008f5b] text-white font-bold rounded-xl text-sm shadow-lg shadow-primary/20 transition flex items-center gap-2 disabled:opacity-50"
+                            >
+                                {saving ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                                {saving ? 'Guardando...' : 'Guardar Configuración'}
+                            </button>
+
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <input
+                                    type="email"
+                                    value={testRecipient}
+                                    onChange={(e) => setTestRecipient(e.target.value)}
+                                    placeholder="Correo para prueba..."
+                                    className="px-3.5 py-2.5 bg-gray-50 border border-gray-200 rounded-xl text-xs outline-none focus:border-primary w-56"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={handleTestEmail}
+                                    disabled={testing}
+                                    className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs transition flex items-center gap-1.5 disabled:opacity-50"
+                                >
+                                    {testing ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                                    {testing ? 'Enviando prueba...' : 'Enviar Correo de Prueba'}
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
         </div>
     );
 };

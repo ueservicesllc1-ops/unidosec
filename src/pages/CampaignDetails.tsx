@@ -9,6 +9,7 @@ import { getRecentDonations, toggleCampaignLike, type CampaignData, type Donatio
 import { useAuth } from '../context/AuthContext';
 import { createWithdrawalRequest } from '../services/withdrawalService';
 import { uploadVerificationDocument, uploadMedicalDocument, canWithdraw, isCampaignRequiringMedicalDoc, type VerificationDocType } from '../services/medicalVerificationService';
+import { createComplianceReport } from '../services/complianceService';
 import PayPalDonationButton from '../components/PayPalDonationButton';
 
 // Helper to extract YouTube ID
@@ -61,6 +62,16 @@ const CampaignDetails = () => {
     const [showWithdrawalModal, setShowWithdrawalModal] = useState(false);
     const [showRequirementsModal, setShowRequirementsModal] = useState(false);
     const [isSubmittingWithdrawal, setIsSubmittingWithdrawal] = useState(false);
+
+    // Estado para reporte de conducta / cumplimiento
+    const [showReportModal, setShowReportModal] = useState(false);
+    const [isSubmittingReport, setIsSubmittingReport] = useState(false);
+    const [reportForm, setReportForm] = useState({
+        category: 'FALSE_FUNDS' as 'FALSE_FUNDS' | 'FALSE_PROCESS' | 'FALSE_WITHDRAWAL' | 'MANIPULATED_INFO' | 'OTHER',
+        reason: '',
+        reporterName: '',
+        reporterEmail: ''
+    });
 
     // Estado para carga de documentos de verificación
     const [uploadingDocType, setUploadingDocType] = useState<VerificationDocType | null>(null);
@@ -155,6 +166,43 @@ const CampaignDetails = () => {
     const handleDonationSuccess = () => {
         // Refresh data to show new donation and updated amount
         fetchData();
+    };
+
+    const handleReportSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!campaign) return;
+        if (!reportForm.reason.trim()) {
+            alert('Por favor describe los detalles o enlaces del reporte.');
+            return;
+        }
+        setIsSubmittingReport(true);
+        try {
+            await createComplianceReport({
+                campaignId: campaign.id,
+                campaignTitle: campaign.title,
+                organizerId: campaign.organizer?.uid || campaign.userId || 'unknown',
+                organizerName: campaign.organizer?.name || 'Organizador',
+                organizerEmail: campaign.organizer?.email || '',
+                reporterId: user?.uid,
+                reporterName: reportForm.reporterName || user?.displayName || 'Usuario de la plataforma',
+                reporterEmail: reportForm.reporterEmail || user?.email || '',
+                reportReason: reportForm.reason,
+                reportedCategory: reportForm.category
+            });
+            alert('✅ Tu reporte ha sido registrado en el Sistema de Cumplimiento de Unidos EC. Se iniciará el protocolo de debida diligencia y contraste probatorio de conformidad con la Sección 6 de los Términos.');
+            setShowReportModal(false);
+            setReportForm({
+                category: 'FALSE_FUNDS',
+                reason: '',
+                reporterName: '',
+                reporterEmail: ''
+            });
+        } catch (err: any) {
+            console.error('Error registrando reporte:', err);
+            alert('No se pudo registrar el reporte: ' + (err?.message || 'Error desconocido'));
+        } finally {
+            setIsSubmittingReport(false);
+        }
     };
 
     const handleWithdrawalSubmit = async (e: React.FormEvent) => {
@@ -397,6 +445,54 @@ const CampaignDetails = () => {
                 <meta itemProp="image" content={ogImage} />
             </Helmet>
 
+            {/* Status Warning Banners */}
+            {campaign.status === 'suspended' && (
+                <div className="mb-8 bg-amber-50 border-2 border-amber-300 rounded-2xl p-5 shadow-sm">
+                    <div className="flex items-start gap-3.5">
+                        <AlertTriangle className="w-6 h-6 text-amber-600 shrink-0 mt-0.5" />
+                        <div>
+                            <h3 className="text-base font-bold text-amber-900">
+                                Campaña Suspendida Temporalmente por Revisión de Cumplimiento
+                            </h3>
+                            <p className="text-sm text-amber-800 mt-1 leading-relaxed">
+                                Esta campaña se encuentra bajo procedimiento de verificación formal conforme a la <strong>Política de Integridad, Conducta y Uso Responsable (Sección 6 de los Términos y Condiciones)</strong>. La recepción de nuevas donaciones y solicitudes de retiro han sido pausadas cautelarmente.
+                            </p>
+                            {campaign.suspensionReason && (
+                                <div className="mt-2.5 p-3 bg-white/90 rounded-xl border border-amber-200 text-xs text-amber-900">
+                                    <strong>Motivo notificado:</strong> {campaign.suspensionReason}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {campaign.status === 'cancelled' && (
+                <div className="mb-8 bg-red-50 border-2 border-red-300 rounded-2xl p-5 shadow-sm">
+                    <div className="flex items-start gap-3.5">
+                        <ShieldAlert className="w-6 h-6 text-red-600 shrink-0 mt-0.5" />
+                        <div>
+                            <h3 className="text-base font-bold text-red-900">
+                                Campaña Cancelada y Cerrada Definitivamente
+                            </h3>
+                            <p className="text-sm text-red-800 mt-1 leading-relaxed">
+                                Esta causa ha sido dada de baja en aplicación de la Sección 6 de los Términos y Condiciones de Unidos EC. Las donaciones están permanentemente cerradas y los fondos recaudados están sujetos al procedimiento de devolución a donantes según la cláusula 6.4.
+                            </p>
+                            {campaign.cancellationReason && (
+                                <div className="mt-2.5 p-3 bg-white/90 rounded-xl border border-red-200 text-xs text-red-900">
+                                    <strong>Resolución administrativa:</strong> {campaign.cancellationReason}
+                                </div>
+                            )}
+                            {campaign.refundSummary && (
+                                <div className="mt-3 p-3 bg-emerald-50 rounded-xl border border-emerald-200 text-xs text-emerald-900">
+                                    <strong>Estado de Devolución a Donantes:</strong> Reembolso neto disponible de ${campaign.refundSummary.totalNetRefundable} para {campaign.refundSummary.donors?.length || 0} donantes (descontando comisiones directas de pasarela).
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
+
             {/* FLATTENED GRID: Allows interleaving content for Mobile/Desktop */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
 
@@ -570,6 +666,24 @@ const CampaignDetails = () => {
                                                 Campaña en revisión de seguridad. Estará disponible una vez sea aprobada dentro de 24h.
                                             </p>
                                         </div>
+                                    ) : campaign.status === 'suspended' ? (
+                                        <div className="p-3.5 bg-amber-50 border-2 border-amber-300 rounded-xl text-center">
+                                            <p className="text-xs font-bold text-amber-900 flex items-center justify-center gap-1.5">
+                                                <AlertTriangle className="w-3.5 h-3.5 text-amber-600" /> Donaciones Suspendidas
+                                            </p>
+                                            <p className="text-[11px] text-amber-800 mt-1 leading-relaxed">
+                                                Campaña pausada preventivamente por auditoría de cumplimiento (Sección 6 T&C).
+                                            </p>
+                                        </div>
+                                    ) : campaign.status === 'cancelled' ? (
+                                        <div className="p-3.5 bg-red-50 border-2 border-red-300 rounded-xl text-center">
+                                            <p className="text-xs font-bold text-red-900 flex items-center justify-center gap-1.5">
+                                                <ShieldAlert className="w-3.5 h-3.5 text-red-600" /> Campaña Cancelada
+                                            </p>
+                                            <p className="text-[11px] text-red-800 mt-1 leading-relaxed">
+                                                Campaña cerrada definitivamente. Fondos en proceso de devolución a donantes.
+                                            </p>
+                                        </div>
                                     ) : (
                                         <PayPalDonationButton
                                             campaignId={campaign.id}
@@ -605,6 +719,14 @@ const CampaignDetails = () => {
                                     className="w-full bg-white border border-gray-200 hover:bg-gray-50 text-gray-700 font-bold py-3 px-4 rounded-xl transition flex items-center justify-center shadow-sm"
                                 >
                                     <Share2 className="h-5 w-5 mr-2" /> Compartir Campaña
+                                </button>
+
+                                <button
+                                    onClick={() => setShowReportModal(true)}
+                                    className="w-full bg-slate-50 border border-slate-200 hover:bg-slate-100 text-slate-600 hover:text-slate-900 font-medium py-2.5 px-4 rounded-xl transition flex items-center justify-center text-xs gap-1.5"
+                                >
+                                    <ShieldAlert className="h-4 w-4 text-slate-400" />
+                                    Reportar irregularidad o infracción
                                 </button>
 
                                 {/* ─────────────────────────────────────────────── */}
@@ -1245,6 +1367,111 @@ const CampaignDetails = () => {
                         alt="Zoomed"
                         onClick={(e) => e.stopPropagation()}
                     />
+                </div>
+            )}
+
+            {/* Modal de Reporte de Cumplimiento / Conducta */}
+            {showReportModal && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="bg-white rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-2xl border border-gray-100 relative max-h-[90vh] overflow-y-auto">
+                        <button
+                            onClick={() => setShowReportModal(false)}
+                            className="absolute top-5 right-5 text-gray-400 hover:text-gray-600 p-1.5 rounded-full hover:bg-gray-100 transition"
+                        >
+                            <X className="w-5 h-5" />
+                        </button>
+
+                        <div className="flex items-center gap-3 mb-4">
+                            <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-600 flex items-center justify-center shrink-0 border border-amber-100">
+                                <ShieldAlert className="w-6 h-6" />
+                            </div>
+                            <div>
+                                <h3 className="text-xl font-bold text-gray-900">Reportar campaña</h3>
+                                <p className="text-xs text-gray-500">Procedimiento formal de Integridad y Conducta</p>
+                            </div>
+                        </div>
+
+                        <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl mb-5 text-xs text-slate-700 leading-relaxed">
+                            Unidos EC garantiza el examen riguroso de hechos y contraste probatorio objetivo de conformidad con la <strong>Sección 6 de los Términos y Condiciones</strong>.
+                        </div>
+
+                        <form onSubmit={handleReportSubmit} className="space-y-4">
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1.5 uppercase tracking-wider">
+                                    Motivo o categoría del reporte
+                                </label>
+                                <select
+                                    value={reportForm.category}
+                                    onChange={(e) => setReportForm({ ...reportForm, category: e.target.value as any })}
+                                    className="w-full px-4 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm focus:bg-white focus:ring-2 focus:ring-primary/20 focus:border-primary transition"
+                                >
+                                    <option value="FALSE_FUNDS">Información falsa o manipulada sobre fondos o donaciones</option>
+                                    <option value="FALSE_PROCESS">Aseveraciones falsas sobre procesos o políticas de Unidos EC</option>
+                                    <option value="FALSE_WITHDRAWAL">Datos falsos sobre retiros o desembolsos bancarios</option>
+                                    <option value="MANIPULATED_INFO">Uso indebido de actualizaciones para difamar</option>
+                                    <option value="OTHER">Otra irregularidad comprobable</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label className="block text-xs font-bold text-gray-700 mb-1.5 uppercase tracking-wider">
+                                    Descripción detallada y enlaces de evidencia *
+                                </label>
+                                <textarea
+                                    required
+                                    rows={4}
+                                    value={reportForm.reason}
+                                    onChange={(e) => setReportForm({ ...reportForm, reason: e.target.value })}
+                                    placeholder="Indica con precisión los hechos, declaraciones o enlaces donde conste la información cuestionada..."
+                                    className="w-full px-4 py-3 rounded-xl border border-gray-200 bg-gray-50 text-sm focus:bg-white focus:ring-2 focus:ring-primary/20 focus:border-primary transition resize-none"
+                                />
+                            </div>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                    <label className="block text-xs font-semibold text-gray-600 mb-1">
+                                        Tu nombre (opcional)
+                                    </label>
+                                    <input
+                                        type="text"
+                                        value={reportForm.reporterName}
+                                        onChange={(e) => setReportForm({ ...reportForm, reporterName: e.target.value })}
+                                        placeholder="Nombre o anónimo"
+                                        className="w-full px-3.5 py-2 rounded-xl border border-gray-200 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                                    />
+                                </div>
+                                <div>
+                                    <label className="block text-xs font-semibold text-gray-600 mb-1">
+                                        Tu correo (opcional)
+                                    </label>
+                                    <input
+                                        type="email"
+                                        value={reportForm.reporterEmail}
+                                        onChange={(e) => setReportForm({ ...reportForm, reporterEmail: e.target.value })}
+                                        placeholder="correo@ejemplo.com"
+                                        className="w-full px-3.5 py-2 rounded-xl border border-gray-200 text-sm focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="flex gap-3 pt-2">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowReportModal(false)}
+                                    className="flex-1 py-3 px-4 bg-gray-100 text-gray-700 font-bold rounded-xl hover:bg-gray-200 transition text-sm"
+                                >
+                                    Cancelar
+                                </button>
+                                <button
+                                    type="submit"
+                                    disabled={isSubmittingReport}
+                                    className="flex-1 py-3 px-4 bg-amber-600 text-white font-bold rounded-xl hover:bg-amber-700 transition text-sm shadow-md flex items-center justify-center gap-2 disabled:opacity-70"
+                                >
+                                    {isSubmittingReport ? 'Enviando...' : 'Registrar reporte'}
+                                </button>
+                            </div>
+                        </form>
+                    </div>
                 </div>
             )}
         </div>

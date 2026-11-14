@@ -2,6 +2,7 @@ import { db, storage } from '../firebase';
 import {
     doc,
     updateDoc,
+    setDoc,
     serverTimestamp,
     collection,
     addDoc,
@@ -201,6 +202,20 @@ export const uploadVerificationDocument = async (
     // Actualizar documento de la campaña
     await updateDoc(doc(db, 'campaigns', campaignId), updateFields);
 
+    // Sincronizar también con el expediente del usuario
+    if (userId) {
+        try {
+            await setDoc(doc(db, 'users', userId), {
+                [`verification_${docType}_url`]: downloadURL,
+                [`verification_${docType}_status`]: 'under_review',
+                [`verification_${docType}_uploadedAt`]: serverTimestamp(),
+                lastDocumentUploadedAt: serverTimestamp(),
+            }, { merge: true });
+        } catch (err) {
+            console.warn('No se pudo sincronizar el documento con el perfil de usuario:', err);
+        }
+    }
+
     // Registro de Auditoría
     await addDoc(collection(db, 'medical_verification_log'), {
         campaignId,
@@ -344,12 +359,99 @@ export const getAllMedicalCampaigns = async (): Promise<any[]> => {
         const snap = await getDocs(q);
         return snap.docs
             .map(d => ({ id: d.id, ...d.data() }))
-            .filter(c => isCampaignRequiringMedicalDoc(c) || c.medicalDocumentUrl || c.idDocumentUrl || c.bankCertificateUrl || c.authorizationLetterUrl);
+            .filter(c => isCampaignRequiringMedicalDoc(c) || c.medicalDocumentUrl || c.idDocumentUrl || c.bankCertificateUrl || c.authorizationLetterUrl || c.additionalVerificationDocUrl);
     } catch (e) {
         // Fallback si el índice orderBy falla
         const snap = await getDocs(collection(db, 'campaigns'));
         return snap.docs
             .map(d => ({ id: d.id, ...d.data() }))
-            .filter(c => isCampaignRequiringMedicalDoc(c) || c.medicalDocumentUrl || c.idDocumentUrl || c.bankCertificateUrl || c.authorizationLetterUrl);
+            .filter(c => isCampaignRequiringMedicalDoc(c) || c.medicalDocumentUrl || c.idDocumentUrl || c.bankCertificateUrl || c.authorizationLetterUrl || c.additionalVerificationDocUrl);
     }
 };
+
+// ─────────────────────────────────────────────────────────────
+// OBTENER CAMPAÑAS DEL USUARIO PARA VERIFICACIÓN DE RETIRO
+// ─────────────────────────────────────────────────────────────
+export const getUserCampaignsForVerification = async (userId: string, userEmail?: string): Promise<any[]> => {
+    try {
+        const campaignsRef = collection(db, 'campaigns');
+        const map = new Map<string, any>();
+
+        if (userId) {
+            const q1 = query(campaignsRef, where('userId', '==', userId));
+            const snap1 = await getDocs(q1);
+            snap1.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() }));
+
+            const q2 = query(campaignsRef, where('organizerId', '==', userId));
+            const snap2 = await getDocs(q2);
+            snap2.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() }));
+        }
+
+        if (userEmail) {
+            const q3 = query(campaignsRef, where('organizer.email', '==', userEmail));
+            const snap3 = await getDocs(q3);
+            snap3.docs.forEach(d => map.set(d.id, { id: d.id, ...d.data() }));
+        }
+
+        return Array.from(map.values());
+    } catch (error) {
+        console.error('Error fetching user campaigns for verification:', error);
+        return [];
+    }
+};
+
+// ─────────────────────────────────────────────────────────────
+// SUBIR DOCUMENTO DIRECTAMENTE AL EXPEDIENTE DE USUARIO
+// Útil si el usuario aún no asocia una campaña o como expediente global
+// ─────────────────────────────────────────────────────────────
+export const uploadUserVerificationDocument = async (
+    userId: string,
+    file: File,
+    docType: VerificationDocType,
+    userEmail?: string,
+    userName?: string
+): Promise<string> => {
+    if (!file) throw new Error('No se ha proporcionado ningún archivo.');
+
+    const MAX_SIZE_MB = 20;
+    if (file.size > MAX_SIZE_MB * 1024 * 1024) {
+        throw new Error(`El archivo supera el límite permitido de ${MAX_SIZE_MB}MB.`);
+    }
+
+    const cleanName = file.name.replace(/[^a-z0-9._-]/gi, '_').toLowerCase();
+    const path = `verification_docs/users/${userId}/${docType}_${Date.now()}_${cleanName}`;
+    const storageRef = ref(storage, path);
+
+    const snapshot = await uploadBytes(storageRef, file);
+    const downloadURL = await getDownloadURL(snapshot.ref);
+
+    // Guardar en users/{userId}
+    try {
+        await setDoc(doc(db, 'users', userId), {
+            [`verification_${docType}_url`]: downloadURL,
+            [`verification_${docType}_status`]: 'under_review',
+            [`verification_${docType}_uploadedAt`]: serverTimestamp(),
+            lastDocumentUploadedAt: serverTimestamp(),
+            ...(userEmail ? { email: userEmail } : {}),
+            ...(userName ? { displayName: userName } : {}),
+        }, { merge: true });
+    } catch (e) {
+        console.error('Error updating user document with verification doc:', e);
+    }
+
+    // Registro de Auditoría
+    await addDoc(collection(db, 'medical_verification_log'), {
+        campaignId: 'user_profile',
+        campaignTitle: `Expediente de Usuario: ${userName || userEmail || userId}`,
+        userId,
+        docType,
+        action: 'uploaded',
+        statusBefore: 'pending_upload',
+        statusAfter: 'under_review',
+        documentUrl: downloadURL,
+        timestamp: serverTimestamp(),
+    });
+
+    return downloadURL;
+};
+

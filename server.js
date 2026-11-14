@@ -2,12 +2,113 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { sendGmailSmtp, buildCampaignApprovedEmail, loadEnvFile } from './emailSender.js';
+
+loadEnvFile();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+app.use(express.json({ limit: '2mb' }));
+
+// Endpoint para enviar correo de aprobación de campaña con links de redes sociales
+app.post('/api/send-approval-email', async (req, res) => {
+  try {
+    const {
+      to,
+      campaignId,
+      campaignTitle,
+      organizerName,
+      category,
+      goal,
+      imageUrl,
+      baseUrl,
+      gmailUser,
+      gmailAppPassword,
+      senderName
+    } = req.body || {};
+
+    if (!to || !campaignId || !campaignTitle) {
+      return res.status(400).json({
+        ok: false,
+        error: 'Faltan datos obligatorios (to, campaignId, campaignTitle).'
+      });
+    }
+
+    const emailData = buildCampaignApprovedEmail({
+      campaignId,
+      campaignTitle,
+      organizerName,
+      category,
+      goal,
+      imageUrl,
+      baseUrl: baseUrl || `${req.protocol}://${req.get('host')}`
+    });
+
+    const result = await sendGmailSmtp({
+      gmailUser,
+      gmailAppPassword,
+      to,
+      subject: emailData.subject,
+      text: emailData.text,
+      html: emailData.html,
+      fromName: senderName || 'Unidos EC | EcuFund'
+    });
+
+    return res.json({
+      ok: true,
+      to: result.to,
+      from: result.from,
+      shareLinks: emailData.shareLinks
+    });
+  } catch (error) {
+    console.error('Error sending approval email:', error);
+    return res.status(500).json({
+      ok: false,
+      code: error.code || 'EMAIL_ERROR',
+      error: error.message || 'No se pudo enviar el correo.'
+    });
+  }
+});
+
+// Endpoint para enviar correo de prueba desde el panel de Administración
+app.post('/api/test-email', async (req, res) => {
+  try {
+    const { to, gmailUser, gmailAppPassword, senderName } = req.body || {};
+    const targetEmail = to || gmailUser || process.env.GMAIL_USER;
+
+    const emailData = buildCampaignApprovedEmail({
+      campaignId: 'ejemplo-123',
+      campaignTitle: 'Campaña de Prueba en Unidos EC',
+      organizerName: 'Administrador Unidos EC',
+      category: 'Salud',
+      goal: 5000,
+      baseUrl: 'https://unidosecuador.org'
+    });
+
+    const result = await sendGmailSmtp({
+      gmailUser,
+      gmailAppPassword,
+      to: targetEmail,
+      subject: '✅ Prueba de Configuración de Correo - Unidos EC',
+      text: emailData.text,
+      html: emailData.html,
+      fromName: senderName || 'Unidos EC | EcuFund'
+    });
+
+    return res.json({ ok: true, to: result.to, from: result.from });
+  } catch (error) {
+    console.error('Error sending test email:', error);
+    return res.status(500).json({
+      ok: false,
+      code: error.code || 'EMAIL_ERROR',
+      error: error.message || 'Error al probar el envío de correo.'
+    });
+  }
+});
 
 // Lista de User-Agents de bots de redes sociales
 const isBot = (userAgent) => {

@@ -3,6 +3,8 @@ import { isMedicalCampaign } from './medicalVerificationService';
 import { collection, addDoc, serverTimestamp, DocumentReference, doc, updateDoc, increment, getDoc, query, orderBy, limit, getDocs, arrayUnion, arrayRemove } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 
+import { CURRENT_TERMS_VERSION, TERMS_ACCEPTANCE_DECLARATION } from './termsService';
+
 export interface CampaignData {
     title: string;
     category: string;
@@ -23,7 +25,16 @@ export interface CampaignData {
     videoUrl?: string;
     additionalImages?: string[];
     createdAt?: any;
-    status?: string;
+    status?: 'active' | 'pending' | 'completed' | 'suspended' | 'cancelled' | string;
+    suspendedAt?: any;
+    suspensionReason?: string;
+    cancelledAt?: any;
+    cancellationReason?: string;
+    refundSummary?: any;
+    termsAccepted?: boolean;
+    termsVersion?: string;
+    termsAcceptedAt?: string;
+    termsAcceptanceText?: string;
 }
 
 export interface Donation {
@@ -56,6 +67,11 @@ export const createCampaign = async (data: CampaignData): Promise<string> => {
             currentAmount: 0,
             donorCount: 0,
             status: 'pending',
+            // Términos y Condiciones versionados
+            termsAccepted: true,
+            termsVersion: data.termsVersion || CURRENT_TERMS_VERSION,
+            termsAcceptedAt: data.termsAcceptedAt || new Date().toISOString(),
+            termsAcceptanceText: data.termsAcceptanceText || TERMS_ACCEPTANCE_DECLARATION,
             // Verificación médica — obligatoria para categorías de salud
             medicalDocumentRequired: medicalRequired,
             medicalDocumentStatus: medicalRequired ? 'pending_upload' : 'not_required',
